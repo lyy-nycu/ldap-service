@@ -7,15 +7,17 @@ You are the **supervisor** in a two-agent workflow. You handle architecture deci
 ## Project
 
 LDAP microservice — Go 1.22+, Clean Architecture, deployed to Azure Container Apps.
-Provides a controlled access layer in front of on-prem OpenLDAP via Azure S2S VPN.
+Provides a controlled access layer in front of **two independent on-prem OpenLDAP servers** (internal: student/employee/retire; external: cooperator/alumni) via Azure S2S VPN.
 Full specification: `openspec/specs/ldap-service-spec.md`
+Design and tasks: `openspec/changes/implement-mvp/`
 
 ## Architecture context
 
 - **Pattern**: Strangler Fig — extracting LDAP logic from PHP 8.3 monolith
 - **Callers**: PHP monolith (portal.nycu.edu.tw), MFA Service (separate repo)
 - **Auth**: API Key + HTTPS, machine-to-machine only
-- **Network**: Azure Container Apps → on-prem OpenLDAP via S2S VPN
+- **Network**: Azure Container Apps → two on-prem OpenLDAP servers via S2S VPN
+- **LDAP sources**: Internal (student, employee, retire) + External (cooperator, alumni) — independent hosts, credentials, connection pools. Fan-out: search internal first, fallback to external.
 - **Browser never calls this service directly**
 
 ## Tech stack (approved dependencies only)
@@ -70,7 +72,7 @@ These are NON-NEGOTIABLE. Flag any code that violates them during review.
 
 ### LDAP injection prevention
 - All LDAP filters MUST use `ldap.EscapeFilter()` — never string concatenation
-- Username validation: regex `^[a-zA-Z0-9._-]{1,64}$`
+- Username validation: regex `^[a-zA-Z0-9._@-]{1,128}$` (includes `@` for email-style external usernames)
 - Attribute queries: only whitelisted attributes (see `domain.AllowedAttributes`)
 
 ### Authentication safety
@@ -80,8 +82,8 @@ These are NON-NEGOTIABLE. Flag any code that violates them during review.
 - Use search-then-bind pattern, do NOT hardcode DN prefix
 
 ### Credential management
-- Read operations: read-only LDAP bind account (`LDAP_READONLY_BIND_DN`)
-- After user bind (authenticate), connection MUST re-bind to read-only before returning to pool
+- Read operations: each LDAP source has its own read-only bind account (`LDAP_INTERNAL_BIND_DN`, `LDAP_EXTERNAL_BIND_DN`)
+- User bind (authenticate): create a new connection, bind, close — do NOT reuse pooled connections for user bind
 - API Key comparison: `crypto/subtle.ConstantTimeCompare()` only
 
 ### Rate limiting
@@ -141,6 +143,7 @@ internal/
     requestid.go    — request ID injection
     logger.go       — zap request logging
   infra/
-    config/config.go — env var loading
-    ldap/repository.go — LDAP connection pool + operations
+    config/config.go   — env var loading (dual-source config)
+    ldap/pool.go       — Pool: single-server connection pool (implements domain.LDAPPool)
+    ldap/repository.go — Repository: fan-out across internal + external pools (implements domain.LDAPRepository)
 ```
