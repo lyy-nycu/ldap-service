@@ -18,13 +18,13 @@ You are performing a security review on the LDAP service codebase. Check every f
 
 - [ ] Every LDAP filter uses `ldap.EscapeFilter()` for user-provided values
 - [ ] No string concatenation or `fmt.Sprintf` used to build LDAP filters WITHOUT EscapeFilter
-- [ ] Username input validated against regex `^[a-zA-Z0-9._-]{1,64}$` before any LDAP operation
+- [ ] Username input validated against regex `^[a-zA-Z0-9._@-]{1,128}$` before any LDAP operation
 - [ ] Attribute names validated against whitelist before any LDAP search
 
 ## A04 — Insecure Design
 
 - [ ] Search-then-bind pattern used for authentication (not direct bind with assumed DN)
-- [ ] LDAP connection re-binds to read-only account after user bind in authenticate flow
+- [ ] User bind uses a NEW connection (not from pool) and closes it after the bind attempt
 - [ ] Connection pool properly handles stale connections (IsClosing check)
 - [ ] No LDAP modify/delete operations exposed in MVP
 
@@ -50,6 +50,16 @@ You are performing a security review on the LDAP service codebase. Check every f
 - [ ] .env file is in .gitignore
 - [ ] Dockerfile uses `scratch` base image (minimal attack surface)
 - [ ] No default/sample API Keys in committed code
+
+## Attack Vector Test Coverage
+
+- [ ] Username validation tests include LDAP injection cases: `()`, `*`, `|`, `&`, `!`, `\`
+- [ ] Username validation tests include encoding attacks: null byte `\x00`, tab, newline, carriage return
+- [ ] Username validation tests include special characters: `<>`, `'`, `"`, `#`, `+`, `=`, `,`
+- [ ] Username validation tests include boundary cases: empty, max length, max length + 1
+- [ ] Attribute validation tests include sensitive attributes: `userPassword`, `objectClass`, `*` wildcard
+- [ ] Authenticate handler tests verify response body never contains the password string
+- [ ] Rate limit tests verify the Nth+1 request is rejected (not just that N requests succeed)
 
 ## RFC 7807 Compliance
 

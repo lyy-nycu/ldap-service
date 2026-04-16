@@ -169,9 +169,17 @@ func TestLookup(t *testing.T) {
         mockErr    error
         wantErr    error
     }{
+        // Valid cases
         {name: "valid internal user", username: "110550001", ...},
         {name: "valid external user (email)", username: "alumni@example.com", ...},
-        {name: "invalid username", username: "user)(evil", wantErr: domain.ErrInvalidUsername},
+
+        // Attack vectors — MUST include these categories for any user input
+        {name: "LDAP injection parentheses", username: "user)(uid=*)", wantErr: domain.ErrInvalidUsername},
+        {name: "LDAP injection OR filter", username: "user)(|(uid=*)", wantErr: domain.ErrInvalidUsername},
+        {name: "null byte injection", username: "user\x00admin", wantErr: domain.ErrInvalidUsername},
+        {name: "DN traversal", username: "uid=admin,ou=employee,o=nycu", wantErr: domain.ErrInvalidUsername},
+
+        // Domain errors
         {name: "not found in either source", wantErr: domain.ErrAccountNotFound},
     }
     for _, tt := range tests {
@@ -180,6 +188,14 @@ func TestLookup(t *testing.T) {
         })
     }
 }
+```
+
+**Test coverage requirements**: Every test file MUST include attack vector cases for any user input field. Categories to cover:
+- **LDAP injection**: `()`, `*`, `|`, `&`, `!`, `\` in filter syntax
+- **Encoding attacks**: null bytes `\x00`, tabs `\t`, newlines `\n`, carriage returns `\r`
+- **Special characters**: `<>`, `'`, `"`, `#`, `+`, `=`, `,`
+- **Sensitive attributes**: `userPassword`, `objectClass`, `*` wildcard
+- **Boundary**: max length, max length + 1, empty string
 ```
 
 ### Context keys pattern
@@ -260,6 +276,13 @@ Always include `source` in lookup responses so callers know which LDAP server th
 - Do not put fan-out logic in `Pool` — fan-out belongs in `Repository`
 - Do not reuse pooled connections for user bind — create a new connection, close after bind
 - Do not log the API key value on auth failure — log remote IP only
+
+## Test file rules
+
+Some test files are **fully written by the supervisor** (complete assertions, no `panic`). Others are **skeletons** (test cases defined, assertions are `panic("not implemented")`).
+
+- **Full tests (DO NOT MODIFY)**: If a `_test.go` file has no `panic("not implemented")`, it is a locked specification. Implement the production code to make these tests pass. Do NOT change the test file.
+- **Skeleton tests (implement assertions)**: If a `_test.go` file has `panic("not implemented")` in test bodies, fill in the assertion logic following the acceptance criteria in the comments.
 
 ## Before finishing any task
 

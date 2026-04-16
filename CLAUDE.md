@@ -38,7 +38,9 @@ When asked to work on a new feature or endpoint, produce ONLY:
 1. **Domain types** — structs, interfaces, error definitions in `internal/domain/`
 2. **Acceptance criteria** — as comments on interface methods and handler signatures
 3. **Handler signatures** — function signatures with `panic("not implemented")` body
-4. **Test skeleton** — table-driven test structure with test case names, no implementation
+4. **Tests** — two tiers:
+   - **Security-critical files** (`pool.go`, `repository.go`, `apikey.go`, `ratelimit.go`, `authenticate.go`): write **full tests** with complete assertions. Copilot MUST NOT modify these tests — only make them pass.
+   - **Other files** (`config.go`, `response.go`, `health.go`, `lookup.go`, `requestid.go`, `logger.go`): write test skeletons with table-driven structure, test case names, and `panic("not implemented")` for Copilot to fill in.
 
 Format acceptance criteria as structured comments:
 
