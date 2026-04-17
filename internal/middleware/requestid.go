@@ -3,6 +3,8 @@ package middleware
 import (
 	"context"
 	"net/http"
+
+	"github.com/google/uuid"
 )
 
 // ctxKeyRequestID is the context key for request ID.
@@ -26,5 +28,14 @@ func RequestIDFromContext(ctx context.Context) string {
 //   - MUST store the request ID in request context using ctxKeyRequestID
 //   - MUST call next.ServeHTTP with the updated context
 func RequestID(next http.Handler) http.Handler {
-	panic("not implemented")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.NewString()
+		}
+
+		w.Header().Set("X-Request-ID", requestID)
+		ctx := context.WithValue(r.Context(), ctxKeyRequestID{}, requestID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

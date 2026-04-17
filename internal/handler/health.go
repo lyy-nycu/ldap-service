@@ -13,7 +13,14 @@ import (
 //   - MUST NOT check LDAP connectivity
 //   - MUST only accept GET method
 func HandleHealthz() http.HandlerFunc {
-	panic("not implemented")
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		RespondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
 }
 
 // HandleReadyz returns a readiness probe handler.
@@ -24,5 +31,17 @@ func HandleHealthz() http.HandlerFunc {
 //   - If unhealthy: respond with RespondProblem using domain.NewServiceUnavailable
 //   - MUST only accept GET method
 func HandleReadyz(repo domain.LDAPRepository) http.HandlerFunc {
-	panic("not implemented")
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := repo.HealthCheck(r.Context()); err != nil {
+			RespondProblem(w, domain.NewServiceUnavailable("ldap service unavailable", ""))
+			return
+		}
+
+		RespondJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	}
 }
