@@ -1,0 +1,68 @@
+# Internal LDAP seed data
+# Base DN: dc=nycu
+# Active OUs: student, employee, retire
+
+# --- OUs ---
+
+dn: ou=student,dc=nycu
+objectClass: organizationalUnit
+ou: student
+
+dn: ou=employee,dc=nycu
+objectClass: organizationalUnit
+ou: employee
+
+dn: ou=retire,dc=nycu
+objectClass: organizationalUnit
+ou: retire
+
+# --- Student accounts ---
+
+dn: uid=110550001,ou=student,dc=nycu
+objectClass: inetOrgPerson
+uid: 110550001
+cn: 110550001
+sn: Wang
+givenName: Test
+mail: 110550001@nycu.edu.tw
+userPassword: testpass123
+ou: student
+displayName: Test Wang
+
+dn: uid=110550002,ou=student,dc=nycu
+objectClass: inetOrgPerson
+uid: 110550002
+cn: 110550002
+sn: Chen
+givenName: Another
+mail: 110550002@nycu.edu.tw
+userPassword: testpass123
+ou: student
+displayName: Another Chen
+
+# --- Employee accounts ---
+
+dn: uid=T1234,ou=employee,dc=nycu
+objectClass: inetOrgPerson
+uid: T1234
+cn: T1234
+sn: Lin
+givenName: Staff
+mail: t1234@nycu.edu.tw
+userPassword: testpass123
+ou: employee
+displayName: Staff Lin
+title: Engineer
+
+# --- Retire accounts ---
+
+dn: uid=RT00001,ou=retire,dc=nycu
+objectClass: inetOrgPerson
+uid: RT00001
+cn: RT00001
+sn: Huang
+givenName: Retired
+mail: rt00001@nycu.edu.tw
+userPassword: testpass123
+ou: retire
+displayName: Retired Huang

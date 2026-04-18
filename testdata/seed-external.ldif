@@ -1,0 +1,39 @@
+# External LDAP seed data
+# Base DN: dc=nycu
+# Active OUs: alumni, cooperator
+
+# --- OUs ---
+
+dn: ou=alumni,dc=nycu
+objectClass: organizationalUnit
+ou: alumni
+
+dn: ou=cooperator,dc=nycu
+objectClass: organizationalUnit
+ou: cooperator
+
+# --- Alumni accounts ---
+
+dn: uid=alumni01@example.com,ou=alumni,dc=nycu
+objectClass: inetOrgPerson
+uid: alumni01@example.com
+cn: alumni01@example.com
+sn: Lee
+givenName: Alumni
+mail: alumni01@nycu.edu.tw
+userPassword: testpass123
+ou: alumni
+displayName: Alumni Lee
+
+# --- Cooperator accounts ---
+
+dn: uid=coop01@partner.com,ou=cooperator,dc=nycu
+objectClass: inetOrgPerson
+uid: coop01@partner.com
+cn: coop01@partner.com
+sn: Wu
+givenName: Cooperator
+mail: coop01@partner.com
+userPassword: testpass123
+ou: cooperator
+displayName: Cooperator Wu
