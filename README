@@ -1,1 +1,299 @@
-# LDAP service
+# LDAP Service
+
+This service is a machine-to-machine LDAP access layer in front of two independent on-prem LDAP sources.
+
+- Internal LDAP source: student, employee, retire
+- External LDAP source: cooperator, alumni
+- Fan-out strategy: search internal first, then external if not found
+
+The goal is to provide stable HTTP APIs for lookup and authentication without exposing LDAP implementation details to callers.
+
+## What Each Endpoint Means
+
+| Method | Path | Meaning | API Key Required |
+| --- | --- | --- | --- |
+| GET | /healthz | Liveness probe. Process is up. Does not check LDAP connectivity. | No |
+| GET | /readyz | Readiness probe. Verifies both LDAP sources are reachable. | No |
+| POST | /api/v1/ldap/lookup | Look up one account and selected attributes by username. | Yes |
+| POST | /api/v1/ldap/lookup/batch | Look up multiple accounts in one request. | Yes |
+| POST | /api/v1/ldap/authenticate | Verify username/password by search-then-bind on the matching LDAP source. | Yes |
+
+Function mapping in code:
+
+- HandleHealthz -> GET /healthz
+- HandleReadyz -> GET /readyz
+- HandleLookup -> POST /api/v1/ldap/lookup
+- HandleBatchLookup -> POST /api/v1/ldap/lookup/batch
+- HandleAuthenticate -> POST /api/v1/ldap/authenticate
+
+## Authentication and Headers
+
+Protected API routes under /api/v1/ldap/* require this header:
+
+- X-Api-Key: your-service-api-key
+
+Health endpoints (/healthz and /readyz) do not require API keys.
+
+## Lookup Data Model
+
+Successful lookup results return an account object with:
+
+- dn: LDAP distinguished name
+- uid: username/uid
+- source: LDAP source label, either internal or external
+- attributes: selected LDAP attributes as key/value pairs
+
+The source field tells callers where the account came from.
+
+## Allowed Lookup Attributes
+
+Only whitelisted attributes are accepted:
+
+- cn
+- uid
+- sn
+- givenName
+- dept
+- deptCode
+- employeeStatus
+- title
+- ou
+- mobile
+- mail
+- alternative-mail
+
+Requests outside this whitelist return a 400 problem response.
+
+## Endpoint Contracts
+
+### 1) GET /healthz
+
+Meaning:
+
+- Checks if the HTTP service process is alive.
+- Does not verify LDAP servers.
+
+Success response:
+
+```json
+{"status":"ok"}
+```
+
+### 2) GET /readyz
+
+Meaning:
+
+- Checks whether both LDAP sources are reachable.
+
+Success response (200):
+
+```json
+{"status":"ready"}
+```
+
+Failure response (503, application/problem+json):
+
+```json
+{
+	"type": "/problems/service-unavailable",
+	"title": "Service unavailable",
+	"status": 503,
+	"detail": "ldap service unavailable"
+}
+```
+
+### 3) POST /api/v1/ldap/lookup
+
+Meaning:
+
+- Finds one account by username.
+- Returns only requested allowed attributes.
+
+Request body:
+
+```json
+{
+	"username": "110550001",
+	"attributes": ["cn", "mail", "ou"]
+}
+```
+
+Success response (200):
+
+```json
+{
+	"dn": "uid=110550001,ou=student,o=nycu",
+	"uid": "110550001",
+	"source": "internal",
+	"attributes": {
+		"cn": "Student User",
+		"mail": "student@example.edu.tw",
+		"ou": "student"
+	}
+}
+```
+
+Common errors:
+
+- 400 /problems/invalid-request
+- 400 /problems/invalid-username
+- 400 /problems/attribute-not-allowed
+- 404 /problems/not-found
+- 503 /problems/service-unavailable
+
+### 4) POST /api/v1/ldap/lookup/batch
+
+Meaning:
+
+- Performs independent fan-out lookup for each username.
+- Returns found accounts and a separate not_found list.
+
+Request body:
+
+```json
+{
+	"usernames": ["110550001", "alumni@example.com"],
+	"attributes": ["cn", "mail"]
+}
+```
+
+Success response (200):
+
+```json
+{
+	"accounts": [
+		{
+			"dn": "uid=110550001,ou=student,o=nycu",
+			"uid": "110550001",
+			"source": "internal",
+			"attributes": {
+				"cn": "Student User",
+				"mail": "student@example.edu.tw"
+			}
+		},
+		{
+			"dn": "uid=alumni@example.com,ou=alumni,o=nycu",
+			"uid": "alumni@example.com",
+			"source": "external",
+			"attributes": {
+				"cn": "Alumni User",
+				"mail": "alumni@example.com"
+			}
+		}
+	],
+	"not_found": []
+}
+```
+
+Note:
+
+- not_found is an empty array when all usernames are found.
+
+### 5) POST /api/v1/ldap/authenticate
+
+Meaning:
+
+- Verifies username and password via LDAP bind on the source where user is found.
+- Uses generic failure semantics to avoid account existence leakage.
+
+Request body:
+
+```json
+{
+	"username": "110550001",
+	"password": "plain-text-password"
+}
+```
+
+Success response (200):
+
+```json
+{"authenticated":true}
+```
+
+Failure response (401, always generic):
+
+```json
+{
+	"type": "/problems/authentication-failed",
+	"title": "Authentication failed",
+	"status": 401,
+	"detail": "authentication failed"
+}
+```
+
+Security notes:
+
+- Passwords are never returned.
+- Failure responses do not reveal whether the user exists.
+- Username-based rate limiting applies to this endpoint.
+
+## Error Response Format
+
+Error responses use RFC 7807 with content type application/problem+json.
+
+Typical shape:
+
+```json
+{
+	"type": "/problems/invalid-request",
+	"title": "Invalid request",
+	"status": 400,
+	"detail": "invalid request body",
+	"instance": "req-..."
+}
+```
+
+## Quick Start (curl)
+
+Set these shell variables first:
+
+```bash
+export BASE_URL="http://localhost:8080"
+export API_KEY="replace-with-valid-api-key"
+```
+
+1. Check service liveness:
+
+```bash
+curl -sS "$BASE_URL/healthz"
+```
+
+2. Check LDAP readiness:
+
+```bash
+curl -sS "$BASE_URL/readyz"
+```
+
+3. Single lookup:
+
+```bash
+curl -sS -X POST "$BASE_URL/api/v1/ldap/lookup" \
+	-H "Content-Type: application/json" \
+	-H "X-Api-Key: $API_KEY" \
+	-d '{"username":"110550001","attributes":["cn","mail","ou"]}'
+```
+
+4. Batch lookup:
+
+```bash
+curl -sS -X POST "$BASE_URL/api/v1/ldap/lookup/batch" \
+	-H "Content-Type: application/json" \
+	-H "X-Api-Key: $API_KEY" \
+	-d '{"usernames":["110550001","alumni@example.com"],"attributes":["cn","mail"]}'
+```
+
+5. Authenticate:
+
+```bash
+curl -sS -X POST "$BASE_URL/api/v1/ldap/authenticate" \
+	-H "Content-Type: application/json" \
+	-H "X-Api-Key: $API_KEY" \
+	-d '{"username":"110550001","password":"your-password"}'
+```
+
+## Integration Notes
+
+- This service is intended for backend service-to-service usage.
+- Callers should treat all non-2xx responses as authoritative and inspect RFC 7807 fields.
+- For authentication, do not branch behavior on failure detail; failures are intentionally generic.
