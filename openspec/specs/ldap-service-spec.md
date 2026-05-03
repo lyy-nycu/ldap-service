@@ -292,6 +292,8 @@ Readiness probe，檢查 LDAP 連線是否正常。
 | `uid` | 與 cn 相同值 |
 | `sn` | 使用者 first name |
 | `givenName` | 使用者姓名 |
+| `fullname` | 使用者全名（on-prem 自訂 attribute） |
+| `initials` | 使用者縮寫（on-prem 自訂 attribute） |
 | `dept` | 部門、系所中文名稱 |
 | `deptCode` | 部門、系所代碼 |
 | `employeeStatus` | 使用者狀態 |
@@ -300,6 +302,8 @@ Readiness probe，檢查 LDAP 連線是否正常。
 | `mobile` | 個人手機 |
 | `mail` | 學校 Google mail |
 | `alternative-mail` | 個人備援 mail（自訂 attribute，含 hyphen） |
+
+備註：目前 whitelist 為全域規則，所有通過 API key 驗證的 service 共用同一套可查詢 attributes，尚未實作 per-service attribute ACL。
 
 ---
 

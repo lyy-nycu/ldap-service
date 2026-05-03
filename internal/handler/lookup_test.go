@@ -42,6 +42,7 @@ func TestHandleLookup(t *testing.T) {
 		wantType   string
 	}{
 		{name: "valid lookup", method: http.MethodPost, body: `{"username":"110550001","attributes":["mail"]}`, lookupRes: &domain.Account{DN: "uid=110550001,ou=student,o=nycu", UID: "110550001", Source: domain.SourceInternal, Attributes: map[string]string{"mail": "s@nycu.edu.tw"}}, wantStatus: 200},
+		{name: "valid lookup with fullname and initials", method: http.MethodPost, body: `{"username":"110550001","attributes":["fullname","initials"]}`, lookupRes: &domain.Account{DN: "uid=110550001,ou=student,o=nycu", UID: "110550001", Source: domain.SourceInternal, Attributes: map[string]string{"fullname": "Student User", "initials": "SU"}}, wantStatus: 200},
 		{name: "valid lookup external email", method: http.MethodPost, body: `{"username":"alumni@example.com","attributes":["mail"]}`, lookupRes: &domain.Account{DN: "uid=alumni@example.com,ou=alumni,o=nycu", UID: "alumni@example.com", Source: domain.SourceExternal, Attributes: map[string]string{"mail": "a@nycu.edu.tw"}}, wantStatus: 200},
 		{name: "invalid JSON", method: http.MethodPost, body: `{invalid`, wantStatus: 400},
 		{name: "missing username", method: http.MethodPost, body: `{"attributes":["mail"]}`, wantStatus: 400},
@@ -121,6 +122,7 @@ func TestHandleBatchLookup(t *testing.T) {
 		wantType   string
 	}{
 		{name: "valid batch", method: http.MethodPost, body: `{"usernames":["110550001","T1234"],"attributes":["mail"]}`, batchRes: []*domain.Account{{DN: "uid=110550001,ou=student,o=nycu", UID: "110550001", Source: domain.SourceInternal, Attributes: map[string]string{"mail": "a"}}}, batchMiss: []string{"T1234"}, wantStatus: 200},
+		{name: "valid batch with fullname and initials", method: http.MethodPost, body: `{"usernames":["110550001"],"attributes":["fullname","initials"]}`, batchRes: []*domain.Account{{DN: "uid=110550001,ou=student,o=nycu", UID: "110550001", Source: domain.SourceInternal, Attributes: map[string]string{"fullname": "Student User", "initials": "SU"}}}, batchMiss: []string{}, wantStatus: 200},
 		{name: "empty usernames", method: http.MethodPost, body: `{"usernames":[],"attributes":["mail"]}`, wantStatus: 400},
 		{name: "invalid JSON", method: http.MethodPost, body: `{bad`, wantStatus: 400},
 		{name: "wrong method", method: http.MethodGet, body: "", wantStatus: 405},

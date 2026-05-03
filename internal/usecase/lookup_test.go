@@ -58,6 +58,7 @@ func TestLookupService_Lookup(t *testing.T) {
 		wantCalled bool // should repository be called?
 	}{
 		{name: "valid internal user", username: "110550001", attributes: []string{"mail"}, mockResult: &domain.Account{UID: "110550001", Source: domain.SourceInternal}, wantCalled: true},
+		{name: "valid lookup with fullname and initials", username: "110550001", attributes: []string{"fullname", "initials"}, mockResult: &domain.Account{UID: "110550001", Source: domain.SourceInternal, Attributes: map[string]string{"fullname": "Student User", "initials": "SU"}}, wantCalled: true},
 		{name: "valid external user", username: "alumni@example.com", attributes: []string{"mail"}, mockResult: &domain.Account{UID: "alumni@example.com", Source: domain.SourceExternal}, wantCalled: true},
 		{name: "invalid username", username: "user)(evil", attributes: []string{"mail"}, wantErr: domain.ErrInvalidUsername, wantCalled: false},
 		{name: "disallowed attribute", username: "110550001", attributes: []string{"userPassword"}, wantErr: domain.ErrAttributeNotAllowed, wantCalled: false},
@@ -110,6 +111,7 @@ func TestLookupService_LookupBatch(t *testing.T) {
 		wantCalled bool
 	}{
 		{name: "valid batch", usernames: []string{"110550001", "T1234"}, attributes: []string{"mail"}, wantErr: false, wantCalled: true},
+		{name: "valid batch with fullname and initials", usernames: []string{"110550001", "T1234"}, attributes: []string{"fullname", "initials"}, wantErr: false, wantCalled: true},
 		{name: "batch exceeds limit", usernames: make([]string, 51), attributes: []string{"mail"}, wantErr: true, wantCalled: false},
 		{name: "one invalid username in batch", usernames: []string{"valid1", "bad)(user"}, attributes: []string{"mail"}, wantErr: true, wantErrIs: domain.ErrInvalidUsername, wantCalled: false},
 		{name: "empty usernames slice", usernames: []string{}, attributes: []string{"mail"}, wantErr: false, wantCalled: true},

@@ -43,6 +43,8 @@ var AllowedAttributes = map[string]bool{
 	"uid":              true,
 	"sn":               true,
 	"givenName":        true,
+	"fullname":         true,
+	"initials":         true,
 	"dept":             true,
 	"deptCode":         true,
 	"employeeStatus":   true,

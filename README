@@ -53,6 +53,8 @@ Only whitelisted attributes are accepted:
 - uid
 - sn
 - givenName
+- fullname
+- initials
 - dept
 - deptCode
 - employeeStatus
@@ -63,6 +65,8 @@ Only whitelisted attributes are accepted:
 - alternative-mail
 
 Requests outside this whitelist return a 400 problem response.
+
+The whitelist is global for all authenticated API consumers. There is no per-service attribute ACL in the current MVP.
 
 ## Endpoint Contracts
 

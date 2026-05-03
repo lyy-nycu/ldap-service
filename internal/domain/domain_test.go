@@ -85,9 +85,11 @@ func TestValidateAttributes(t *testing.T) {
 		{name: "single allowed attribute", input: []string{"mail"}, wantErr: false},
 		{name: "multiple allowed attributes", input: []string{"mail", "mobile", "dept"}, wantErr: false},
 		{name: "all allowed attributes", input: []string{
-			"cn", "uid", "sn", "givenName", "dept", "deptCode",
+			"cn", "uid", "sn", "givenName", "fullname", "initials", "dept", "deptCode",
 			"employeeStatus", "title", "ou", "mobile", "mail", "alternative-mail",
 		}, wantErr: false},
+		{name: "fullname attribute", input: []string{"fullname"}, wantErr: false},
+		{name: "initials attribute", input: []string{"initials"}, wantErr: false},
 		{name: "hyphenated attribute", input: []string{"alternative-mail"}, wantErr: false},
 		{name: "empty slice", input: []string{}, wantErr: false},
 
