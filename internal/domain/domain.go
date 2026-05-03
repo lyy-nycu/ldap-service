@@ -102,6 +102,7 @@ func ValidateAttributes(attributes []string) error {
 var (
 	ErrAccountNotFound      = errors.New("account not found")
 	ErrInvalidUsername      = errors.New("invalid username")
+	ErrBatchSizeExceeded    = errors.New("batch size exceeded")
 	ErrAttributeNotAllowed  = errors.New("attribute not allowed")
 	ErrAuthenticationFailed = errors.New("authentication failed")
 	ErrServiceUnavailable   = errors.New("service unavailable")

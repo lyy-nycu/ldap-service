@@ -130,6 +130,7 @@ func TestHandleBatchLookup(t *testing.T) {
 		{name: "all found", method: http.MethodPost, body: `{"usernames":["110550001"],"attributes":["mail"]}`, batchRes: []*domain.Account{{DN: "uid=110550001,ou=student,o=nycu", UID: "110550001", Source: domain.SourceInternal, Attributes: map[string]string{"mail": "a"}}}, batchMiss: []string{}, wantStatus: 200},
 		{name: "mixed found and not found", method: http.MethodPost, body: `{"usernames":["110550001","nobody"],"attributes":["mail"]}`, batchRes: []*domain.Account{{DN: "uid=110550001,ou=student,o=nycu", UID: "110550001", Source: domain.SourceInternal, Attributes: map[string]string{"mail": "a"}}}, batchMiss: []string{"nobody"}, wantStatus: 200},
 		{name: "batch service unavailable", method: http.MethodPost, body: `{"usernames":["110550001"],"attributes":["mail"]}`, wantStatus: 503, wantType: "/problems/service-unavailable"},
+		{name: "batch exceeds limit maps to invalid request", method: http.MethodPost, body: `{"usernames":["110550001"],"attributes":["mail"]}`, wantStatus: 400, wantType: "/problems/invalid-request"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -139,6 +140,9 @@ func TestHandleBatchLookup(t *testing.T) {
 			uc := &mockLookupUseCase{lookupBatchResult: tt.batchRes, lookupBatchMissed: tt.batchMiss}
 			if tt.wantStatus == 503 {
 				uc.lookupBatchErr = domain.ErrServiceUnavailable
+			}
+			if tt.wantStatus == 400 && tt.wantType == "/problems/invalid-request" {
+				uc.lookupBatchErr = domain.ErrBatchSizeExceeded
 			}
 			h := HandleBatchLookup(uc)
 

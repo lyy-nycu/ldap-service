@@ -112,7 +112,7 @@ func TestLookupService_LookupBatch(t *testing.T) {
 	}{
 		{name: "valid batch", usernames: []string{"110550001", "T1234"}, attributes: []string{"mail"}, wantErr: false, wantCalled: true},
 		{name: "valid batch with fullname and initials", usernames: []string{"110550001", "T1234"}, attributes: []string{"fullname", "initials"}, wantErr: false, wantCalled: true},
-		{name: "batch exceeds limit", usernames: make([]string, 51), attributes: []string{"mail"}, wantErr: true, wantCalled: false},
+		{name: "batch exceeds limit", usernames: make([]string, 51), attributes: []string{"mail"}, wantErr: true, wantErrIs: domain.ErrBatchSizeExceeded, wantCalled: false},
 		{name: "one invalid username in batch", usernames: []string{"valid1", "bad)(user"}, attributes: []string{"mail"}, wantErr: true, wantErrIs: domain.ErrInvalidUsername, wantCalled: false},
 		{name: "empty usernames slice", usernames: []string{}, attributes: []string{"mail"}, wantErr: false, wantCalled: true},
 	}

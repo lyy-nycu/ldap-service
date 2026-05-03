@@ -50,7 +50,7 @@ func (s *LookupService) Lookup(ctx context.Context, username string, attributes 
 //  4. Call r.repo.LookupBatch()
 func (s *LookupService) LookupBatch(ctx context.Context, usernames []string, attributes []string) ([]*domain.Account, []string, error) {
 	if len(usernames) > MaxBatchSize {
-		return nil, nil, fmt.Errorf("batch size exceeds maximum of %d", MaxBatchSize)
+		return nil, nil, fmt.Errorf("%w: maximum of %d", domain.ErrBatchSizeExceeded, MaxBatchSize)
 	}
 
 	for _, username := range usernames {

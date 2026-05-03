@@ -141,6 +141,8 @@ func HandleBatchLookup(uc domain.LookupUseCase) http.HandlerFunc {
 		accounts, notFound, err := uc.LookupBatch(r.Context(), req.Usernames, req.Attributes)
 		if err != nil {
 			switch {
+			case errors.Is(err, domain.ErrBatchSizeExceeded):
+				RespondProblem(w, domain.NewInvalidRequest(err.Error(), requestID))
 			case errors.Is(err, domain.ErrInvalidUsername):
 				RespondProblem(w, domain.NewInvalidUsername(err.Error(), requestID))
 			case errors.Is(err, domain.ErrAttributeNotAllowed):
