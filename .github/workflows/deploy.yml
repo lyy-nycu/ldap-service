@@ -28,20 +28,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.meta.outputs.image_tag }}
-      image: ${{ steps.meta.outputs.image }}
+      image: ${{ steps.acr.outputs.image }}
+      login_server: ${{ steps.acr.outputs.login_server }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compute image metadata
+      - name: Compute image tag
         id: meta
         shell: bash
         run: |
           set -euo pipefail
           image_tag="git-${GITHUB_SHA::7}"
-          image="${{ vars.ACR_NAME }}.azurecr.io/ldap-service:${image_tag}"
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
 
       - name: Azure login
         uses: azure/login@v2
@@ -50,11 +49,21 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Resolve ACR login server
+        id: acr
+        shell: bash
+        run: |
+          set -euo pipefail
+          login_server="$(az acr show --name "${{ vars.ACR_NAME }}" --query loginServer --output tsv)"
+          image="${login_server}/ldap-service:${{ steps.meta.outputs.image_tag }}"
+          echo "login_server=${login_server}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
       - name: Login to ACR
         run: az acr login --name "${{ vars.ACR_NAME }}"
 
       - name: Build and push image
-        run: docker buildx build --push -t "${{ steps.meta.outputs.image }}" .
+        run: docker buildx build --push -t "${{ steps.acr.outputs.image }}" .
 
   deploy-staging:
     name: Deploy Staging
@@ -99,8 +108,8 @@ jobs:
         if: ${{ github.event_name == 'push' }}
         run: |
           docker pull "${{ needs.build.outputs.image }}"
-          docker tag "${{ needs.build.outputs.image }}" "${{ vars.ACR_NAME }}.azurecr.io/ldap-service:staging-latest"
-          docker push "${{ vars.ACR_NAME }}.azurecr.io/ldap-service:staging-latest"
+          docker tag "${{ needs.build.outputs.image }}" "${{ needs.build.outputs.login_server }}/ldap-service:staging-latest"
+          docker push "${{ needs.build.outputs.login_server }}/ldap-service:staging-latest"
 
   deploy-prod:
     name: Deploy Prod
@@ -150,5 +159,5 @@ jobs:
         if: ${{ github.event_name == 'push' }}
         run: |
           docker pull "${{ needs.build.outputs.image }}"
-          docker tag "${{ needs.build.outputs.image }}" "${{ vars.ACR_NAME }}.azurecr.io/ldap-service:prod-latest"
-          docker push "${{ vars.ACR_NAME }}.azurecr.io/ldap-service:prod-latest"
+          docker tag "${{ needs.build.outputs.image }}" "${{ needs.build.outputs.login_server }}/ldap-service:prod-latest"
+          docker push "${{ needs.build.outputs.login_server }}/ldap-service:prod-latest"
