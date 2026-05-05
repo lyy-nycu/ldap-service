@@ -148,6 +148,6 @@ The repository's `README.md` SHALL contain a "Deploying" section that lists all 
 #### Scenario: README lists all required variables
 
 - **WHEN** a new operator reads the README "Deploying" section
-- **THEN** they find each of `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_CLIENT_ID`, `ACR_NAME`, `ACA_RESOURCE_GROUP`, `ACA_APP_NAME_STAGING`, `ACA_APP_NAME_PROD` documented with its purpose
+- **THEN** they find each of `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_CLIENT_ID`, `ACR_NAME`, `ACA_RESOURCE_GROUP_STAGING`, `ACA_RESOURCE_GROUP_PROD`, `ACA_APP_NAME_STAGING`, `ACA_APP_NAME_PROD` documented with its purpose
 - **AND** the document explains that `prod` requires reviewer approval
 - **AND** the document explains how to roll back via `workflow_dispatch`

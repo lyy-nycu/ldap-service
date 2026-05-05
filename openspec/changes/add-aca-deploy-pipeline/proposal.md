@@ -49,7 +49,7 @@ _None — this change adds a new capability; it does not alter existing service 
       - `repo:<org>/ldap-service:ref:refs/heads/main` (push trigger)
       - `repo:<org>/ldap-service:environment:staging` and `:environment:prod` (workflow_dispatch via GitHub Environments)
 - **New GitHub repo configuration**:
-  - Variables: `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_CLIENT_ID`, `ACR_NAME`, `ACA_RESOURCE_GROUP`, `ACA_APP_NAME_STAGING`, `ACA_APP_NAME_PROD`
+  - Variables: `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_CLIENT_ID`, `ACR_NAME`, `ACA_RESOURCE_GROUP_STAGING`, `ACA_RESOURCE_GROUP_PROD`, `ACA_APP_NAME_STAGING`, `ACA_APP_NAME_PROD`
   - GitHub Environments: `staging` (no gate), `prod` (**required reviewer approval** — at least one designated reviewer must approve before prod job runs)
   - No long-lived secrets required (OIDC handles auth)
 - **No code changes** to `internal/` or `cmd/` — the service already produces a working container.
