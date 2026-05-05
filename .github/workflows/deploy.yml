@@ -1,0 +1,154 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployment target
+        required: true
+        type: choice
+        options:
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_tag="git-${GITHUB_SHA::7}"
+          image="${{ vars.ACR_NAME }}.azurecr.io/ldap-service:${image_tag}"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name "${{ vars.ACR_NAME }}"
+
+      - name: Build and push image
+        run: docker buildx build --push -t "${{ steps.meta.outputs.image }}" .
+
+  deploy-staging:
+    name: Deploy Staging
+    runs-on: ubuntu-latest
+    needs: build
+    environment: staging
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Container App image
+        run: |
+          az containerapp update \
+            --name "${{ vars.ACA_APP_NAME_STAGING }}" \
+            --resource-group "${{ vars.ACA_RESOURCE_GROUP_STAGING }}" \
+            --image "${{ needs.build.outputs.image }}"
+
+      - name: Wait for health endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show \
+            --name "${{ vars.ACA_APP_NAME_STAGING }}" \
+            --resource-group "${{ vars.ACA_RESOURCE_GROUP_STAGING }}" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          ./.github/scripts/health-poll.sh "$fqdn" 180 5
+
+      - name: Login to ACR
+        if: ${{ github.event_name == 'push' }}
+        run: az acr login --name "${{ vars.ACR_NAME }}"
+
+      - name: Update staging-latest tag
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          docker pull "${{ needs.build.outputs.image }}"
+          docker tag "${{ needs.build.outputs.image }}" "${{ vars.ACR_NAME }}.azurecr.io/ldap-service:staging-latest"
+          docker push "${{ vars.ACR_NAME }}.azurecr.io/ldap-service:staging-latest"
+
+  deploy-prod:
+    name: Deploy Prod
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - deploy-staging
+    if: ${{ always() && ((github.event_name == 'push' && needs.build.result == 'success' && needs.deploy-staging.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prod' && needs.build.result == 'success')) }}
+    environment: prod
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Container App image
+        run: |
+          az containerapp update \
+            --name "${{ vars.ACA_APP_NAME_PROD }}" \
+            --resource-group "${{ vars.ACA_RESOURCE_GROUP_PROD }}" \
+            --image "${{ needs.build.outputs.image }}"
+
+      - name: Wait for health endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show \
+            --name "${{ vars.ACA_APP_NAME_PROD }}" \
+            --resource-group "${{ vars.ACA_RESOURCE_GROUP_PROD }}" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          ./.github/scripts/health-poll.sh "$fqdn" 180 5
+
+      - name: Login to ACR
+        if: ${{ github.event_name == 'push' }}
+        run: az acr login --name "${{ vars.ACR_NAME }}"
+
+      - name: Update prod-latest tag
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          docker pull "${{ needs.build.outputs.image }}"
+          docker tag "${{ needs.build.outputs.image }}" "${{ vars.ACR_NAME }}.azurecr.io/ldap-service:prod-latest"
+          docker push "${{ vars.ACR_NAME }}.azurecr.io/ldap-service:prod-latest"

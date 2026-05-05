@@ -8,6 +8,8 @@ This service is a machine-to-machine LDAP access layer in front of two independe
 
 The goal is to provide stable HTTP APIs for lookup and authentication without exposing LDAP implementation details to callers.
 
+See [Deploying](#deploying) for CI/CD triggers, required GitHub variables, environment gates, and rollback.
+
 ## What Each Endpoint Means
 
 | Method | Path | Meaning | API Key Required |
@@ -301,3 +303,43 @@ curl -sS -X POST "$BASE_URL/api/v1/ldap/authenticate" \
 - This service is intended for backend service-to-service usage.
 - Callers should treat all non-2xx responses as authoritative and inspect RFC 7807 fields.
 - For authentication, do not branch behavior on failure detail; failures are intentionally generic.
+
+## Deploying
+
+Trigger model:
+
+```text
+merge to main -> build (git-<sha>) -> deploy-staging -> prod approval gate -> deploy-prod
+```
+
+- Automatic deploy chain: `push` to `main` runs build once, deploys to staging, then waits for reviewer approval before prod.
+- Manual deploy: `workflow_dispatch` on `.github/workflows/deploy.yml` with `environment=staging|prod` deploys the selected ref.
+- `workflow_dispatch` does not update `staging-latest` or `prod-latest`; only successful `main` chain deploys update those mutable tags.
+
+Required GitHub repository variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `AZURE_TENANT_ID` | Microsoft Entra tenant ID used by OIDC login |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID used by OIDC login |
+| `AZURE_CLIENT_ID` | Client ID of user-assigned managed identity federated to this repo |
+| `ACR_NAME` | Shared Azure Container Registry name (without `.azurecr.io`) |
+| `ACA_RESOURCE_GROUP_STAGING` | Resource group containing `ldap-service-staging` |
+| `ACA_RESOURCE_GROUP_PROD` | Resource group containing `ldap-service-prod` |
+| `ACA_APP_NAME_STAGING` | Staging Container App name (expected: `ldap-service-staging`) |
+| `ACA_APP_NAME_PROD` | Production Container App name (expected: `ldap-service-prod`) |
+
+GitHub Environments:
+
+- `staging`: no protection rules required.
+- `prod`: must have at least one required reviewer. The `deploy-prod` job will pause for approval in this environment.
+
+Rollback:
+
+```bash
+gh workflow run deploy.yml -f environment=prod --ref <prior-good-sha>
+```
+
+Runtime configuration note:
+
+- Runtime secrets (API key and LDAP bind credentials) are configured on each Azure Container App and are not stored in workflow files.
