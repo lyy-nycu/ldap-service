@@ -12,7 +12,7 @@ interval_seconds="${3:-5}"
 deadline=$((SECONDS + timeout_seconds))
 
 while (( SECONDS < deadline )); do
-  if curl -fsS "https://${fqdn}/healthz" >/dev/null && curl -fsS "https://${fqdn}/readyz" >/dev/null; then
+  if curl -fsS --connect-timeout 3 --max-time 5 "https://${fqdn}/healthz" >/dev/null && curl -fsS --connect-timeout 3 --max-time 5 "https://${fqdn}/readyz" >/dev/null; then
     echo "health checks passed for ${fqdn}"
     exit 0
   fi
