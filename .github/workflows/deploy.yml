@@ -89,16 +89,45 @@ jobs:
             --resource-group "${{ vars.ACA_RESOURCE_GROUP_STAGING }}" \
             --image "${{ needs.build.outputs.image }}"
 
-      - name: Wait for health endpoints
+      - name: Wait for ready revision
         shell: bash
         run: |
           set -euo pipefail
-          fqdn="$(az containerapp show \
-            --name "${{ vars.ACA_APP_NAME_STAGING }}" \
-            --resource-group "${{ vars.ACA_RESOURCE_GROUP_STAGING }}" \
-            --query properties.configuration.ingress.fqdn \
+          app_name="${{ vars.ACA_APP_NAME_STAGING }}"
+          resource_group="${{ vars.ACA_RESOURCE_GROUP_STAGING }}"
+          timeout_seconds=180
+          interval_seconds=5
+
+          target_revision="$(az containerapp show \
+            --name "$app_name" \
+            --resource-group "$resource_group" \
+            --query properties.latestRevisionName \
             --output tsv)"
-          ./.github/scripts/health-poll.sh "$fqdn" 180 5
+          deadline=$((SECONDS + timeout_seconds))
+
+          while (( SECONDS < deadline )); do
+            latest_ready_revision="$(az containerapp show \
+              --name "$app_name" \
+              --resource-group "$resource_group" \
+              --query properties.latestReadyRevisionName \
+              --output tsv)"
+            running_status="$(az containerapp show \
+              --name "$app_name" \
+              --resource-group "$resource_group" \
+              --query properties.runningStatus \
+              --output tsv)"
+
+            if [[ "$latest_ready_revision" == "$target_revision" && "$running_status" == "Running" ]]; then
+              echo "container app revision is ready: $target_revision"
+              exit 0
+            fi
+
+            echo "waiting for revision readiness: target=$target_revision ready=$latest_ready_revision status=$running_status"
+            sleep "$interval_seconds"
+          done
+
+          echo "container app revision did not become ready in time: $target_revision" >&2
+          exit 1
 
       - name: Login to ACR
         if: ${{ github.event_name == 'push' }}
@@ -140,16 +169,45 @@ jobs:
             --resource-group "${{ vars.ACA_RESOURCE_GROUP_PROD }}" \
             --image "${{ needs.build.outputs.image }}"
 
-      - name: Wait for health endpoints
+      - name: Wait for ready revision
         shell: bash
         run: |
           set -euo pipefail
-          fqdn="$(az containerapp show \
-            --name "${{ vars.ACA_APP_NAME_PROD }}" \
-            --resource-group "${{ vars.ACA_RESOURCE_GROUP_PROD }}" \
-            --query properties.configuration.ingress.fqdn \
+          app_name="${{ vars.ACA_APP_NAME_PROD }}"
+          resource_group="${{ vars.ACA_RESOURCE_GROUP_PROD }}"
+          timeout_seconds=180
+          interval_seconds=5
+
+          target_revision="$(az containerapp show \
+            --name "$app_name" \
+            --resource-group "$resource_group" \
+            --query properties.latestRevisionName \
             --output tsv)"
-          ./.github/scripts/health-poll.sh "$fqdn" 180 5
+          deadline=$((SECONDS + timeout_seconds))
+
+          while (( SECONDS < deadline )); do
+            latest_ready_revision="$(az containerapp show \
+              --name "$app_name" \
+              --resource-group "$resource_group" \
+              --query properties.latestReadyRevisionName \
+              --output tsv)"
+            running_status="$(az containerapp show \
+              --name "$app_name" \
+              --resource-group "$resource_group" \
+              --query properties.runningStatus \
+              --output tsv)"
+
+            if [[ "$latest_ready_revision" == "$target_revision" && "$running_status" == "Running" ]]; then
+              echo "container app revision is ready: $target_revision"
+              exit 0
+            fi
+
+            echo "waiting for revision readiness: target=$target_revision ready=$latest_ready_revision status=$running_status"
+            sleep "$interval_seconds"
+          done
+
+          echo "container app revision did not become ready in time: $target_revision" >&2
+          exit 1
 
       - name: Login to ACR
         if: ${{ github.event_name == 'push' }}
