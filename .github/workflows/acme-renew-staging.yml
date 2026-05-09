@@ -1,0 +1,203 @@
+name: ACME Renew Staging
+
+"on":
+  schedule:
+    - cron: "25 1 * * *"
+  workflow_dispatch:
+    inputs:
+      acme_server:
+        description: ACME directory URL override
+        required: false
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: acme-renew-staging
+  cancel-in-progress: false
+
+jobs:
+  renew:
+    name: Renew staging cert and update AGW
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      ACME_DOMAIN: ${{ vars.ACME_DOMAIN_STAGING }}
+      ACME_CONTACT_EMAIL: ${{ vars.ACME_CONTACT_EMAIL }}
+      ACME_SERVER: ${{ inputs.acme_server != '' && inputs.acme_server || vars.ACME_SERVER_URL }}
+      STORAGE_ACCOUNT: ${{ vars.ACME_STORAGE_ACCOUNT_STAGING }}
+      KEY_VAULT_NAME: ${{ vars.ACME_KEY_VAULT_NAME_STAGING }}
+      KEY_VAULT_CERT_NAME: ${{ vars.ACME_KEY_VAULT_CERT_NAME_STAGING }}
+      AGW_RESOURCE_GROUP: ${{ vars.AGW_RESOURCE_GROUP_STAGING }}
+      AGW_NAME: ${{ vars.AGW_NAME_STAGING }}
+      AGW_LISTENER_NAME: ${{ vars.AGW_LISTENER_NAME_STAGING }}
+      AGW_SSL_CERT_NAME: ${{ vars.AGW_SSL_CERT_NAME_STAGING }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            ACME_DOMAIN
+            ACME_CONTACT_EMAIL
+            ACME_SERVER
+            STORAGE_ACCOUNT
+            KEY_VAULT_NAME
+            KEY_VAULT_CERT_NAME
+            AGW_RESOURCE_GROUP
+            AGW_NAME
+            AGW_LISTENER_NAME
+            AGW_SSL_CERT_NAME
+          )
+          for k in "${required[@]}"; do
+            if [[ -z "${!k:-}" ]]; then
+              echo "missing required variable: $k" >&2
+              exit 1
+            fi
+          done
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install certbot
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y certbot openssl
+
+      - name: Build certbot HTTP-01 hooks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .github/scripts
+          cat > .github/scripts/acme-http01-auth.sh << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          blob_path=".well-known/acme-challenge/${CERTBOT_TOKEN}"
+          tmp_file="$(mktemp)"
+          printf '%s' "${CERTBOT_VALIDATION}" > "${tmp_file}"
+          az storage blob upload \
+            --account-name "${STORAGE_ACCOUNT}" \
+            --auth-mode login \
+            --container-name '$web' \
+            --name "${blob_path}" \
+            --file "${tmp_file}" \
+            --overwrite true \
+            --only-show-errors \
+            -o none
+          rm -f "${tmp_file}"
+          EOF
+
+          cat > .github/scripts/acme-http01-cleanup.sh << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          blob_path=".well-known/acme-challenge/${CERTBOT_TOKEN}"
+          az storage blob delete \
+            --account-name "${STORAGE_ACCOUNT}" \
+            --auth-mode login \
+            --container-name '$web' \
+            --name "${blob_path}" \
+            --only-show-errors \
+            -o none || true
+          EOF
+
+          chmod +x .github/scripts/acme-http01-auth.sh .github/scripts/acme-http01-cleanup.sh
+
+      - name: Issue or renew certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          certbot certonly \
+            --manual \
+            --non-interactive \
+            --manual-public-ip-logging-ok \
+            --manual-auth-hook .github/scripts/acme-http01-auth.sh \
+            --manual-cleanup-hook .github/scripts/acme-http01-cleanup.sh \
+            --preferred-challenges http \
+            --server "${ACME_SERVER}" \
+            --agree-tos \
+            --email "${ACME_CONTACT_EMAIL}" \
+            -d "${ACME_DOMAIN}"
+
+      - name: Package cert as PFX
+        id: pfx
+        shell: bash
+        run: |
+          set -euo pipefail
+          cert_dir="/etc/letsencrypt/live/${ACME_DOMAIN}"
+          pfx_password="$(openssl rand -base64 24 | tr -d '\n')"
+          openssl pkcs12 -export \
+            -out "${RUNNER_TEMP}/acme-cert.pfx" \
+            -inkey "${cert_dir}/privkey.pem" \
+            -in "${cert_dir}/fullchain.pem" \
+            -passout "pass:${pfx_password}"
+          echo "pfx_password=${pfx_password}" >> "$GITHUB_OUTPUT"
+
+      - name: Import certificate to Key Vault
+        shell: bash
+        run: |
+          set -euo pipefail
+          az keyvault certificate import \
+            --vault-name "${KEY_VAULT_NAME}" \
+            --name "${KEY_VAULT_CERT_NAME}" \
+            --file "${RUNNER_TEMP}/acme-cert.pfx" \
+            --password "${{ steps.pfx.outputs.pfx_password }}" \
+            --only-show-errors \
+            -o none
+
+      - name: Read Key Vault secret id
+        id: cert
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_id="$(az keyvault certificate show \
+            --vault-name "${KEY_VAULT_NAME}" \
+            --name "${KEY_VAULT_CERT_NAME}" \
+            --query sid \
+            --output tsv)"
+          if [[ -z "${secret_id}" ]]; then
+            echo "failed to resolve key vault certificate secret id" >&2
+            exit 1
+          fi
+          echo "secret_id=${secret_id}" >> "$GITHUB_OUTPUT"
+
+      - name: Upsert AGW ssl certificate reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          az network application-gateway ssl-cert create \
+            --resource-group "${AGW_RESOURCE_GROUP}" \
+            --gateway-name "${AGW_NAME}" \
+            --name "${AGW_SSL_CERT_NAME}" \
+            --key-vault-secret-id "${{ steps.cert.outputs.secret_id }}" \
+            --only-show-errors \
+            -o none
+
+      - name: Bind listener to AGW ssl certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          az network application-gateway http-listener update \
+            --resource-group "${AGW_RESOURCE_GROUP}" \
+            --gateway-name "${AGW_NAME}" \
+            --name "${AGW_LISTENER_NAME}" \
+            --ssl-cert "${AGW_SSL_CERT_NAME}" \
+            --only-show-errors \
+            -o none
+
+      - name: Verify challenge path and healthz
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "https://${ACME_DOMAIN}/.well-known/acme-challenge/healthcheck" >/dev/null || true
+          curl -fsS "https://${ACME_DOMAIN}/healthz" >/dev/null
