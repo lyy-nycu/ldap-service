@@ -21,7 +21,11 @@ concurrency:
 jobs:
   renew:
     name: Renew staging cert and update AGW
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - azure-trusted
     environment: staging
     env:
       ACME_DOMAIN: ${{ vars.ACME_DOMAIN_STAGING }}
