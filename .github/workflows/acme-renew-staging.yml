@@ -1,6 +1,9 @@
 name: ACME Renew Staging
 
 "on":
+  push:
+    branches:
+      - ci/bootstrap-pipeline
   schedule:
     - cron: "25 1 * * *"
   workflow_dispatch:
