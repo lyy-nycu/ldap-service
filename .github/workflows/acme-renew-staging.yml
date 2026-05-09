@@ -99,7 +99,19 @@ jobs:
             --overwrite true \
             --only-show-errors \
             -o none
+          # Wait until challenge content is reachable via AGW/public host before returning.
+          challenge_url="https://${ACME_DOMAIN}/${blob_path}"
+          deadline=$((SECONDS + 120))
+          while (( SECONDS < deadline )); do
+            body="$(curl -fsS "${challenge_url}" 2>/dev/null || true)"
+            if [[ "${body}" == "${CERTBOT_VALIDATION}" ]]; then
+              rm -f "${tmp_file}"
+              exit 0
+            fi
+          done
           rm -f "${tmp_file}"
+          echo "challenge token did not become available at ${challenge_url}" >&2
+          exit 1
           EOF
 
           cat > .github/scripts/acme-http01-cleanup.sh << 'EOF'
