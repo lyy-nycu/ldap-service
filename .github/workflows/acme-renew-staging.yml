@@ -101,14 +101,15 @@ jobs:
             --only-show-errors \
             -o none
           # Wait until challenge content is reachable via AGW/public host before returning.
-          challenge_url="https://${ACME_DOMAIN}/${blob_path}"
+          challenge_url="http://${ACME_DOMAIN}/${blob_path}"
           deadline=$((SECONDS + 120))
           while (( SECONDS < deadline )); do
-            body="$(curl -fsS "${challenge_url}" 2>/dev/null || true)"
+            body="$(curl -fsS --connect-timeout 3 --max-time 5 "${challenge_url}" 2>/dev/null || true)"
             if [[ "${body}" == "${CERTBOT_VALIDATION}" ]]; then
               rm -f "${tmp_file}"
               exit 0
             fi
+            sleep 2
           done
           rm -f "${tmp_file}"
           echo "challenge token did not become available at ${challenge_url}" >&2
