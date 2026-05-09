@@ -220,5 +220,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsS "https://${ACME_DOMAIN}/.well-known/acme-challenge/healthcheck" >/dev/null || true
-          curl -fsS "https://${ACME_DOMAIN}/healthz" >/dev/null
+          curl -fsS "http://${ACME_DOMAIN}/.well-known/acme-challenge/test-token" >/dev/null || true
+          # LE staging certs are intentionally untrusted by public clients; use -k for reachability check.
+          curl -kfsS "https://${ACME_DOMAIN}/healthz" >/dev/null
