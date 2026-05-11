@@ -85,18 +85,29 @@ func TestValidateAttributes(t *testing.T) {
 		{name: "single allowed attribute", input: []string{"mail"}, wantErr: false},
 		{name: "multiple allowed attributes", input: []string{"mail", "mobile", "dept"}, wantErr: false},
 		{name: "all allowed attributes", input: []string{
-			"cn", "uid", "sn", "givenName", "fullname", "initials", "dept", "deptCode",
-			"employeeStatus", "title", "ou", "mobile", "mail", "alternative-mail",
+			"cn", "uid", "sn", "givenName", "fullName", "initials", "dept", "employeeStatus",
+			"title", "ou", "mobile", "mail", "Alternate-Email", "birthday", "departmentNumber",
+			"description", "disable", "idno", "originEmail",
 		}, wantErr: false},
-		{name: "fullname attribute", input: []string{"fullname"}, wantErr: false},
+		{name: "fullName attribute", input: []string{"fullName"}, wantErr: false},
 		{name: "initials attribute", input: []string{"initials"}, wantErr: false},
-		{name: "hyphenated attribute", input: []string{"alternative-mail"}, wantErr: false},
+		{name: "hyphenated attribute", input: []string{"Alternate-Email"}, wantErr: false},
+		{name: "birthday attribute", input: []string{"birthday"}, wantErr: false},
+		{name: "departmentNumber attribute", input: []string{"departmentNumber"}, wantErr: false},
+		{name: "description attribute", input: []string{"description"}, wantErr: false},
+		{name: "disable attribute", input: []string{"disable"}, wantErr: false},
+		{name: "idno attribute", input: []string{"idno"}, wantErr: false},
+		{name: "originEmail attribute", input: []string{"originEmail"}, wantErr: false},
 		{name: "empty slice", input: []string{}, wantErr: false},
 
 		// Invalid — sensitive attributes
 		{name: "userPassword blocked", input: []string{"userPassword"}, wantErr: true},
+		{name: "temppassword blocked", input: []string{"temppassword"}, wantErr: true},
 		{name: "objectClass blocked", input: []string{"objectClass"}, wantErr: true},
 		{name: "userCertificate blocked", input: []string{"userCertificate"}, wantErr: true},
+		{name: "fullname lowercase rejected", input: []string{"fullname"}, wantErr: true},
+		{name: "alternative-mail old name rejected", input: []string{"alternative-mail"}, wantErr: true},
+		{name: "deptCode removed", input: []string{"deptCode"}, wantErr: true},
 
 		// Invalid — mixed valid and invalid
 		{name: "mixed valid and invalid", input: []string{"mail", "userPassword"}, wantErr: true},

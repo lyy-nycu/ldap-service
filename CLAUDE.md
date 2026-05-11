@@ -66,7 +66,7 @@ This output becomes the handoff to Copilot for implementation.
 - Base DN: `o=nycu`
 - OUs: `student`, `employee`, `alumni`, `cooperator`, `retire`
 - Search strategy: base=`o=nycu`, scope=`WholeSubtree` (do NOT hardcode OU)
-- Custom attributes with non-standard names: `alternative-mail` (hyphenated)
+- Custom attributes with non-standard names: `Alternate-Email` (hyphenated)
 
 ## Critical security rules
 
