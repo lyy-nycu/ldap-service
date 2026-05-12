@@ -177,7 +177,7 @@ func (p *Pool) putConn(conn ldapConn, overflow bool) {
 //
 // Implementation requirements:
 //   - MUST use ldapv3.EscapeFilter(username) when building the filter — never string concatenation
-//   - Filter template: fmt.Sprintf("(uid=%s)", ldapv3.EscapeFilter(username))
+//   - Filter template: fmt.Sprintf("(cn=%s)", ldapv3.EscapeFilter(username))
 //   - Search base = p.baseDN, scope = ldapv3.ScopeWholeSubtree
 //   - Request only the attributes passed in (no wildcard)
 //   - On len(result.Entries) == 0, return domain.ErrAccountNotFound
@@ -194,7 +194,7 @@ func (p *Pool) Search(ctx context.Context, username string, attributes []string)
 	}
 	defer p.putConn(conn, overflow)
 
-	filter := fmt.Sprintf("(uid=%s)", ldapv3.EscapeFilter(username))
+	filter := fmt.Sprintf("(cn=%s)", ldapv3.EscapeFilter(username))
 	searchReq := ldapv3.NewSearchRequest(
 		p.baseDN,
 		ldapv3.ScopeWholeSubtree,
