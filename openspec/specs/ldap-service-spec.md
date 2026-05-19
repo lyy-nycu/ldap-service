@@ -292,16 +292,21 @@ Readiness probe，檢查 LDAP 連線是否正常。
 | `uid` | 與 cn 相同值 |
 | `sn` | 使用者 first name |
 | `givenName` | 使用者姓名 |
-| `fullname` | 使用者全名（on-prem 自訂 attribute） |
+| `fullName` | 使用者全名（on-prem 自訂 attribute，camelCase；legacy `fullname` 已停用） |
 | `initials` | 使用者縮寫（on-prem 自訂 attribute） |
 | `dept` | 部門、系所中文名稱 |
-| `deptCode` | 部門、系所代碼 |
+| `departmentNumber` | 部門、系所代碼（取代 legacy `deptCode`） |
 | `employeeStatus` | 使用者狀態 |
 | `title` | 使用者職稱 |
 | `ou` | 使用者在 OpenLDAP 的 ou |
 | `mobile` | 個人手機 |
 | `mail` | 學校 Google mail |
-| `alternative-mail` | 個人備援 mail（自訂 attribute，含 hyphen） |
+| `Alternate-Email` | 個人備援 mail（自訂 attribute，含 hyphen 與大寫；取代 legacy `alternative-mail`） |
+| `birthday` | 生日（自訂 attribute） |
+| `description` | 自由描述欄位 |
+| `disable` | 帳號停用旗標 |
+| `idno` | 身分證 / 學號識別碼 |
+| `originEmail` | 原始註冊 email |
 
 備註：目前 whitelist 為全域規則，所有通過 API key 驗證的 service 共用同一套可查詢 attributes，尚未實作 per-service attribute ACL。
 
@@ -516,7 +521,7 @@ GitHub push → GitHub Actions → Build image → Push to ACR → Deploy to Con
 - **Image**: `bitnami/openldap` 或 `osixia/openldap`
 - **Base DN**: `o=nycu`
 - **預建 OU**: `student`, `employee`, `alumni`, `cooperator`, `retire`
-- **測試帳號**: 每個 OU 各建 2-3 個帳號，包含完整的 custom attributes（`dept`, `deptCode`, `alternative-mail` 等）
+- **測試帳號**: 每個 OU 各建 2-3 個帳號，包含完整的 custom attributes（`dept`, `departmentNumber`, `Alternate-Email` 等）
 - **用途**: 跑 integration test、本地開發除錯
 
 ---

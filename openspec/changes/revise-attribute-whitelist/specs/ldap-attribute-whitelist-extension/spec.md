@@ -1,8 +1,5 @@
-# ldap-attribute-whitelist-extension Specification
+## MODIFIED Requirements
 
-## Purpose
-Define and maintain whitelist requirements for LDAP lookup attributes, including support for `fullName` and `initials`, while preserving existing attribute restrictions and behavior.
-## Requirements
 ### Requirement: Lookup attribute whitelist supports fullName and initials
 The system MUST treat `fullName` (camelCase, matching directory schema) and `initials` as allowed LDAP lookup attributes for both single lookup and batch lookup requests. The legacy lowercase form `fullname` MUST be rejected.
 
@@ -22,7 +19,7 @@ The system MUST treat `fullName` (camelCase, matching directory schema) and `ini
 - **THEN** validation MUST return `ErrAttributeNotAllowed`
 - **AND** handlers MUST map that domain error to `/problems/attribute-not-allowed`
 
-### Requirement: Fullname and initials do not require attribute alias mapping
+### Requirement: fullName and initials do not require attribute alias mapping
 The system MUST NOT introduce runtime mapping from `displayName` (or any other attribute) into `fullName` or `initials`. Whitelist matching MUST remain exact-string and case-sensitive.
 
 #### Scenario: Directory schema provides native fullName and initials
@@ -34,21 +31,7 @@ The system MUST NOT introduce runtime mapping from `displayName` (or any other a
 - **WHEN** a caller requests an attribute whose casing differs from the whitelist entry
 - **THEN** validation MUST return `ErrAttributeNotAllowed`
 
-### Requirement: Existing attribute restrictions remain enforced
-The system MUST continue rejecting non-whitelisted attributes after adding `fullName` and `initials`.
-
-#### Scenario: Sensitive or unknown attribute is requested
-- **WHEN** a caller requests an attribute outside the updated whitelist
-- **THEN** validation MUST return `ErrAttributeNotAllowed`
-- **AND** handlers MUST map that domain error to `/problems/attribute-not-allowed`
-
-### Requirement: Documentation and tests reflect expanded whitelist
-The system MUST keep documentation and tests aligned with the updated whitelist to prevent regressions and integration ambiguity.
-
-#### Scenario: Whitelist documentation and tests are reviewed
-- **WHEN** project documentation and tests are updated for this change
-- **THEN** `fullName` and `initials` MUST appear in allowed-attribute references
-- **AND** table-driven tests MUST include positive coverage for these new attributes
+## ADDED Requirements
 
 ### Requirement: Lookup attribute whitelist supports the Alternate-Email custom attribute
 The system MUST treat `Alternate-Email` (the directory's hyphenated, mixed-case custom attribute name) as an allowed lookup attribute. The legacy form `alternative-mail` MUST be rejected.
@@ -89,3 +72,12 @@ The system MUST NOT include any credential-bearing or authentication-secret attr
 - **THEN** the change author MUST verify that no credential-bearing attribute has been introduced
 - **AND** the negative tests for `userPassword` and `temppassword` MUST remain present in `internal/domain/domain_test.go`
 
+## REMOVED Requirements
+
+### Requirement: Lookup attribute whitelist supports fullname and initials
+**Reason:** Superseded by the camelCase form. The directory schema returns `fullName`, not `fullname`; the previous lowercase form was never correct against the production directory. Replaced by "Lookup attribute whitelist supports fullName and initials" above.
+**Migration:** Callers using `fullname` MUST switch to `fullName`. Validation will reject the old form.
+
+### Requirement: Fullname and initials do not require attribute alias mapping
+**Reason:** Superseded; the equivalent requirement is restated above with the corrected casing and an explicit case-sensitive matching scenario.
+**Migration:** None — behavior is functionally equivalent, only the attribute name casing changes.
