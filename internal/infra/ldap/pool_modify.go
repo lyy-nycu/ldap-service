@@ -7,6 +7,7 @@ import (
 
 	ldapv3 "github.com/go-ldap/ldap/v3"
 	"github.com/nycuitsc/ldap-service/internal/domain"
+	"go.uber.org/zap"
 )
 
 // Modify atomically replaces the given attributes on the subject
@@ -35,6 +36,19 @@ func (p *Pool) Modify(ctx context.Context, subjectID string, attrs []domain.Modi
 	}
 	if len(attrs) == 0 {
 		return domain.ErrNoAttrsToModify
+	}
+
+	// TLS precondition: plaintext userpassword MUST NOT leave the
+	// process over a non-TLS LDAP connection. {scheme} pass-through
+	// values are also refused — {CLEARTEXT}foo is plaintext too, and
+	// even pre-hashed values would be observable by anyone on the wire
+	// who can replay them against the directory.
+	if !p.useTLS && hasUserPassword(attrs) {
+		p.logger.Error("refusing to send userpassword over non-TLS ldap connection",
+			zap.String("subject_uid", subjectID),
+			zap.String("source", p.source),
+		)
+		return domain.ErrServiceUnavailable
 	}
 
 	conn, overflow, err := p.getConn()
@@ -84,6 +98,17 @@ func (p *Pool) Modify(ctx context.Context, subjectID string, attrs []domain.Modi
 		return err
 	}
 	return nil
+}
+
+// hasUserPassword reports whether the modify request includes a
+// userpassword attribute. Used by the TLS precondition gate.
+func hasUserPassword(attrs []domain.ModifyAttr) bool {
+	for _, a := range attrs {
+		if a.Name == "userpassword" {
+			return true
+		}
+	}
+	return false
 }
 
 // isSchemaError reports whether an LDAP error is a schema / constraint

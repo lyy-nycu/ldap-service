@@ -192,21 +192,107 @@ func TestModify_400OnEmptySubjectID(t *testing.T) {
 	}
 }
 
-func TestModify_400OnUnhashedPassword(t *testing.T) {
+// TestModify_PlaintextPassword_ServerSideHashing locks in the relaxed
+// userpassword contract: a plaintext value is accepted, slapd applies
+// its password-hash directive, and the user can subsequently bind with
+// the same plaintext. This is the end-to-end proof that ppolicy
+// (history, quality) now has visibility into passwords.
+//
+// NOTE: this test does not snapshot the stored userPassword attribute
+// because the read-only bind DN used by lookup typically lacks ACL to
+// read it. The bind-success leg is the authoritative signal.
+func TestModify_PlaintextPassword_ServerSideHashing(t *testing.T) {
+	// Use RT00001 (retire OU) to avoid rate-limit collision with
+	// TestAuthenticate / TestRateLimit which exercise student subjects.
+	const subjectID = "RT00001"
+	const plaintextNew = "ppolicy-friendly-plain-PW-12345"
+
+	resp := doRequest(t, http.MethodPost, "/api/v1/ldap/modify", map[string]any{
+		"subject_id": subjectID,
+		"attrs":      map[string]any{"userpassword": plaintextNew},
+	}, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("modify(plaintext) status = %d, want 200, body = %s", resp.StatusCode, body)
+	}
+	t.Cleanup(func() {
+		// Best-effort: restore the fixture password using the legacy
+		// SSHA pass-through so subsequent tests keep working.
+		restoreHash := sshaHash(t, "testpass123")
+		r := doRequest(t, http.MethodPost, "/api/v1/ldap/modify", map[string]any{
+			"subject_id": subjectID,
+			"attrs":      map[string]any{"userpassword": restoreHash},
+		}, true)
+		r.Body.Close()
+	})
+
+	authResp := doRequest(t, http.MethodPost, "/api/v1/ldap/authenticate", map[string]any{
+		"username": subjectID,
+		"password": plaintextNew,
+	}, true)
+	defer authResp.Body.Close()
+	if authResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(authResp.Body)
+		t.Fatalf("authenticate(plaintext-new) status = %d, want 200 (slapd should have hashed plaintext); body = %s", authResp.StatusCode, body)
+	}
+	var ar struct {
+		Authenticated bool `json:"authenticated"`
+	}
+	_ = json.NewDecoder(authResp.Body).Decode(&ar)
+	if !ar.Authenticated {
+		t.Fatalf("authenticated = false, want true — slapd did not hash the plaintext (check the server's password-hash directive)")
+	}
+}
+
+// TestModify_SSHAPassThrough_StillAccepted: the legacy pre-hashed
+// payload from portal-backend must keep working during rollout so the
+// change is additive on the wire.
+func TestModify_SSHAPassThrough_StillAccepted(t *testing.T) {
+	const subjectID = "110550002"
+	hashed := sshaHash(t, "ssha-passthru-XYZ")
+	resp := doRequest(t, http.MethodPost, "/api/v1/ldap/modify", map[string]any{
+		"subject_id": subjectID,
+		"attrs":      map[string]any{"userpassword": hashed},
+	}, true)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("modify({SSHA}) status = %d, want 200, body = %s", resp.StatusCode, body)
+	}
+	t.Cleanup(func() {
+		restoreHash := sshaHash(t, "testpass123")
+		r := doRequest(t, http.MethodPost, "/api/v1/ldap/modify", map[string]any{
+			"subject_id": subjectID,
+			"attrs":      map[string]any{"userpassword": restoreHash},
+		}, true)
+		r.Body.Close()
+	})
+}
+
+// TestModify_400OnPlaintextWithNullByte: plaintext is allowed, but the
+// input guards (NUL / C0 / DEL / >256 bytes) still reject malformed
+// values. This replaces the obsolete "userpassword must start with
+// {SSHA}" rejection test.
+func TestModify_400OnPlaintextWithNullByte(t *testing.T) {
 	resp := doRequest(t, http.MethodPost, "/api/v1/ldap/modify", map[string]any{
 		"subject_id": "110550001",
-		"attrs":      map[string]any{"userpassword": "plaintext-not-ssha"},
+		"attrs":      map[string]any{"userpassword": "abc\x00def"},
 	}, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400 (producer-side SSHA prefix check)", resp.StatusCode)
+		t.Fatalf("status = %d, want 400 (NUL byte in plaintext userpassword)", resp.StatusCode)
 	}
 	var p struct {
-		Type string `json:"type"`
+		Type   string `json:"type"`
+		Detail string `json:"detail"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&p)
 	if p.Type != "/problems/invalid-attr-value" {
 		t.Errorf("problem.type = %q, want /problems/invalid-attr-value", p.Type)
+	}
+	if strings.Contains(p.Detail, "abc") || strings.Contains(p.Detail, "def") {
+		t.Errorf("problem.detail leaks user-supplied bytes: %q", p.Detail)
 	}
 }
 

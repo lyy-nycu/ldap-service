@@ -88,8 +88,11 @@ var (
 	ErrNoAttrsToModify = errors.New("at least one attribute is required")
 
 	// ErrInvalidAttrValue → 400 /problems/invalid-attr-value
-	// Returned for: disable not in {"0","1"}, userpassword missing {SSHA}
-	// prefix, or any other producer-side value validation failure.
+	// Returned for: disable not in {"0","1"}; userpassword that is
+	// plaintext but fails input guards (empty, >256 bytes, NUL / C0
+	// controls / DEL); or any other producer-side value validation
+	// failure. The returned error MUST NOT include the offending
+	// value.
 	ErrInvalidAttrValue = errors.New("invalid attribute value")
 
 	// ErrSchemaViolation → 409 /problems/schema-violation
@@ -109,8 +112,15 @@ type ModifyUseCase interface {
 	//   - MUST validate subjectID with ValidateUsername
 	//   - MUST return ErrNoAttrsToModify if attrs.HasAny() is false
 	//   - MUST return ErrInvalidAttrValue if disable is set and not "0"|"1"
-	//   - MUST return ErrInvalidAttrValue if userpassword is set and does
-	//     NOT start with "{SSHA}" (producer-side validation per spec)
+	//   - userpassword: a value matching ^\{[A-Z0-9]+\}.+ is treated as
+	//     a storage-scheme pass-through (e.g. {SSHA}, {ARGON2}) and
+	//     forwarded verbatim to slapd. Any other non-empty value is
+	//     treated as plaintext and MUST be ≤256 bytes and free of
+	//     NUL / C0 controls (0x00–0x1F) / DEL (0x7F); otherwise the
+	//     use case MUST return ErrInvalidAttrValue without echoing
+	//     the offending value into the error message. Plaintext is
+	//     forwarded to slapd unmodified so the server's password-hash
+	//     directive applies and ppolicy (history / quality) works.
 	//   - MUST call repository.Modify with attrs as-is (no rewriting)
 	//   - MUST return ModifyResult.Modified as a stable-ordered list of
 	//     the attribute KEYS THAT WERE WRITTEN, using the wire spelling
