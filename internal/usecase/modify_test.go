@@ -123,6 +123,26 @@ func TestModifyService_HappyPath_PartialAttrs(t *testing.T) {
 	}
 }
 
+// TestModifyService_DisableOne_IsAccepted locks in the contract that
+// disable="1" is a valid value (per OpenAPI fragment + legacy PHP). An
+// implementation that whitelists only "0" would silently reject a legal
+// consumer request; this test catches that regression.
+func TestModifyService_DisableOne_IsAccepted(t *testing.T) {
+	repo := &modifyMockRepo{}
+	s := NewModifyService(repo)
+
+	res, err := s.Modify(context.Background(), "0856001", domain.ModifyAttrs{Disable: "1"})
+	if err != nil {
+		t.Fatalf("Modify(disable=1) err = %v, want nil", err)
+	}
+	if !reflect.DeepEqual(res.Modified, []string{"disable"}) {
+		t.Fatalf("result.Modified = %v, want [disable]", res.Modified)
+	}
+	if len(repo.gotAttrs) != 1 || repo.gotAttrs[0].Name != "disable" || repo.gotAttrs[0].Value != "1" {
+		t.Fatalf("repo got attrs %+v, want one Replace of disable=1", repo.gotAttrs)
+	}
+}
+
 func TestModifyService_PropagatesRepoErrors(t *testing.T) {
 	for _, sentinel := range []error{
 		domain.ErrAccountNotFound,

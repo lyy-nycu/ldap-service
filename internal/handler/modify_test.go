@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -205,14 +206,45 @@ func TestHandleModify_ErrorMapping(t *testing.T) {
 
 func TestHandleModify_AdditiveOnly_DoesNotAffectLookupOrAuthenticate(t *testing.T) {
 	// Belt-and-suspenders guard for Hard Rule #3 ("additive only"): the
-	// modify handler must be its own http.HandlerFunc and not share any
-	// state with HandleLookup or HandleAuthenticate beyond what's
-	// injected by the constructor. If a future refactor consolidates
-	// them, this test will keep failing until the consolidation can
-	// prove handler equivalence.
-	a := HandleModify(&mockModifyUseCase{result: &domain.ModifyResult{}})
-	b := HandleModify(&mockModifyUseCase{result: &domain.ModifyResult{}})
-	if &a == &b {
-		t.Fatal("HandleModify must return distinct closures per call")
+	// modify handler must be its own http.HandlerFunc constructed from
+	// the ModifyUseCase only — it must not alias HandleLookup,
+	// HandleAuthenticate, or share captured state across calls.
+	//
+	// We compare the underlying function pointers (reflect.Value.Pointer)
+	// because comparing &a == &b would compare stack-local addresses,
+	// which are always distinct and would make the assertion vacuous.
+	ucA := &mockModifyUseCase{result: &domain.ModifyResult{}}
+	ucB := &mockModifyUseCase{result: &domain.ModifyResult{}}
+	a := HandleModify(ucA)
+	b := HandleModify(ucB)
+	if a == nil || b == nil {
+		t.Fatal("HandleModify must not return nil")
+	}
+	if reflect.ValueOf(a).Pointer() != reflect.ValueOf(b).Pointer() {
+		// Both closures share the same generated function body (expected
+		// for an HOF that returns a closure literal), so the function
+		// pointer should match. What MUST differ is captured state:
+		// invoking each must dispatch to its own use case.
+		t.Fatalf("HandleModify closures should share function body but capture distinct state; got different function pointers")
+	}
+
+	// Prove the captured state is disjoint: invoking `a` must only touch
+	// ucA, and invoking `b` must only touch ucB. If the handler
+	// accidentally aliased a package-level use case (or aliased
+	// HandleLookup), one of these counts would be wrong.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ldap/modify",
+		strings.NewReader(`{"subject_id":"0856001","attrs":{"disable":"0"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	a.ServeHTTP(httptest.NewRecorder(), req)
+	if ucA.called != 1 || ucB.called != 0 {
+		t.Fatalf("invoking handler a dispatched to wrong use case: ucA.called=%d ucB.called=%d", ucA.called, ucB.called)
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/ldap/modify",
+		strings.NewReader(`{"subject_id":"0856001","attrs":{"disable":"0"}}`))
+	req2.Header.Set("Content-Type", "application/json")
+	b.ServeHTTP(httptest.NewRecorder(), req2)
+	if ucA.called != 1 || ucB.called != 1 {
+		t.Fatalf("invoking handler b dispatched to wrong use case: ucA.called=%d ucB.called=%d", ucA.called, ucB.called)
 	}
 }

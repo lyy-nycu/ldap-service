@@ -124,3 +124,38 @@ func TestRepository_Modify_BothConnectionErrors_ReturnsServiceUnavailable(t *tes
 		t.Fatalf("Modify() err = %v, want ErrServiceUnavailable", err)
 	}
 }
+
+// TestRepository_Modify_InternalTransportError_FallsOverToExternal locks
+// in the documented partial-outage invariant: if the internal pool
+// returns a transport error (anything that is not ErrAccountNotFound and
+// not ErrSchemaViolation) but the external pool succeeds, the request
+// must succeed. A green implementation that short-circuits to
+// ErrServiceUnavailable on the first transport failure would pass every
+// other fan-out test in this file but silently break the most common
+// real-world degraded-mode scenario.
+func TestRepository_Modify_InternalTransportError_FallsOverToExternal(t *testing.T) {
+	internal := &mockPool{
+		modifyFn: func(ctx context.Context, subjectID string, attrs []domain.ModifyAttr) error {
+			return errors.New("dial tcp: i/o timeout")
+		},
+	}
+	external := &mockPool{
+		modifyFn: func(ctx context.Context, subjectID string, attrs []domain.ModifyAttr) error {
+			return nil
+		},
+	}
+	repo, _ := newTestRepo(t, internal, external)
+
+	err := repo.Modify(context.Background(), "alumni@example.com", []domain.ModifyAttr{
+		{Name: "userpassword", Value: "{SSHA}xyz"},
+	})
+	if err != nil {
+		t.Fatalf("Modify() err = %v, want nil (external must absorb internal transport failure)", err)
+	}
+	if internal.modifyCalls != 1 {
+		t.Errorf("internal.Modify called %d times, want 1", internal.modifyCalls)
+	}
+	if external.modifyCalls != 1 {
+		t.Errorf("external.Modify called %d times, want 1 (transport error MUST fan-over)", external.modifyCalls)
+	}
+}
