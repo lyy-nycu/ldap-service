@@ -2,8 +2,10 @@ package ldap
 
 import (
 	"context"
+	"errors"
 
 	"github.com/nycuitsc/ldap-service/internal/domain"
+	"go.uber.org/zap"
 )
 
 // Modify atomically replaces attributes on the subject identified by
@@ -22,5 +24,40 @@ import (
 //     non-NotFound non-Schema error, return domain.ErrServiceUnavailable.
 //  7. NEVER log attr values (passwords pass through here).
 func (r *Repository) Modify(ctx context.Context, subjectID string, attrs []domain.ModifyAttr) error {
-	panic("not implemented")
+	err := r.internal.Modify(ctx, subjectID, attrs)
+	if err == nil {
+		return nil
+	}
+	// Schema rejection is authoritative — never fan over.
+	if errors.Is(err, domain.ErrSchemaViolation) {
+		return err
+	}
+
+	if !errors.Is(err, domain.ErrAccountNotFound) {
+		r.logger.Warn("internal ldap modify failed, trying external",
+			zap.String("subject_id", subjectID),
+			zap.Error(err))
+	}
+
+	extErr := r.external.Modify(ctx, subjectID, attrs)
+	if extErr == nil {
+		return nil
+	}
+	if errors.Is(extErr, domain.ErrSchemaViolation) {
+		return extErr
+	}
+	if errors.Is(err, domain.ErrAccountNotFound) && errors.Is(extErr, domain.ErrAccountNotFound) {
+		return domain.ErrAccountNotFound
+	}
+	if errors.Is(extErr, domain.ErrAccountNotFound) {
+		// internal had a transport error, external definitively says
+		// not found → bubble the transport-class failure as unavailable.
+		return domain.ErrServiceUnavailable
+	}
+	if errors.Is(err, domain.ErrAccountNotFound) {
+		// internal said not-found, external had a transport error →
+		// caller should retry, not see a 404.
+		return domain.ErrServiceUnavailable
+	}
+	return domain.ErrServiceUnavailable
 }

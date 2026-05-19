@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/nycuitsc/ldap-service/internal/domain"
 )
@@ -34,7 +36,32 @@ func NewModifyService(repo domain.LDAPRepository) *ModifyService {
 //     SAME order ToWireMap returned. The caller uses this list to
 //     verify atomic success without re-reading.
 func (s *ModifyService) Modify(ctx context.Context, subjectID string, attrs domain.ModifyAttrs) (*domain.ModifyResult, error) {
-	panic("not implemented")
+	if subjectID == "" {
+		return nil, domain.ErrSubjectIDRequired
+	}
+	if err := domain.ValidateUsername(subjectID); err != nil {
+		return nil, err
+	}
+	if !attrs.HasAny() {
+		return nil, domain.ErrNoAttrsToModify
+	}
+	if attrs.Disable != "" && attrs.Disable != "0" && attrs.Disable != "1" {
+		return nil, fmt.Errorf("%w: disable must be \"0\" or \"1\"", domain.ErrInvalidAttrValue)
+	}
+	if attrs.UserPassword != "" && !strings.HasPrefix(attrs.UserPassword, "{SSHA}") {
+		return nil, fmt.Errorf("%w: userpassword must be SSHA-hashed (start with {SSHA})", domain.ErrInvalidAttrValue)
+	}
+
+	wire := attrs.ToWireMap()
+	if err := s.repo.Modify(ctx, subjectID, wire); err != nil {
+		return nil, err
+	}
+
+	modified := make([]string, len(wire))
+	for i, a := range wire {
+		modified[i] = a.Name
+	}
+	return &domain.ModifyResult{Modified: modified}, nil
 }
 
 // Compile-time interface check.
