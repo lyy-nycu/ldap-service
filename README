@@ -6,7 +6,7 @@ This service is a machine-to-machine LDAP access layer in front of two independe
 - External LDAP source: cooperator, alumni
 - Fan-out strategy: search internal first, then external if not found
 
-The goal is to provide stable HTTP APIs for lookup and authentication without exposing LDAP implementation details to callers.
+The goal is to provide stable HTTP APIs for lookup, authentication, and attribute modification without exposing LDAP implementation details to callers.
 
 See [Deploying](#deploying) for CI/CD triggers, required GitHub variables, environment gates, and rollback.
 
@@ -19,6 +19,7 @@ See [Deploying](#deploying) for CI/CD triggers, required GitHub variables, envir
 | POST | /api/v1/ldap/lookup | Look up one account and selected attributes by username. | Yes |
 | POST | /api/v1/ldap/lookup/batch | Look up multiple accounts in one request. | Yes |
 | POST | /api/v1/ldap/authenticate | Verify username/password by search-then-bind on the matching LDAP source. | Yes |
+| POST | /api/v1/ldap/modify | Replace one or more attributes on a single account (write). | Yes |
 
 Function mapping in code:
 
@@ -27,6 +28,7 @@ Function mapping in code:
 - HandleLookup -> POST /api/v1/ldap/lookup
 - HandleBatchLookup -> POST /api/v1/ldap/lookup/batch
 - HandleAuthenticate -> POST /api/v1/ldap/authenticate
+- HandleModify -> POST /api/v1/ldap/modify
 
 ## Authentication and Headers
 
@@ -55,16 +57,23 @@ Only whitelisted attributes are accepted:
 - uid
 - sn
 - givenName
-- fullname
+- fullName
 - initials
 - dept
-- deptCode
+- departmentNumber
 - employeeStatus
 - title
 - ou
 - mobile
 - mail
-- alternative-mail
+- Alternate-Email
+- birthday
+- description
+- disable
+- idno
+- originEmail
+
+Matching is exact-string and case-sensitive. Legacy lowercase or alternate spellings (for example `fullname`, `alternative-mail`, `deptCode`) are rejected.
 
 Requests outside this whitelist return a 400 problem response.
 
@@ -234,6 +243,68 @@ Security notes:
 - Failure responses do not reveal whether the user exists.
 - Username-based rate limiting applies to this endpoint.
 
+### 6) POST /api/v1/ldap/modify
+
+Meaning:
+
+- Replaces one or more attributes on a single account (write operation).
+- The subject account is located by fan-out (internal first, then external).
+- Each attribute is applied with the LDAP `Replace` modification op (existing values are overwritten).
+- Only the four attributes listed in the request body schema below are accepted as write targets. This is intentionally narrower than the lookup whitelist.
+
+Writable attributes (request body keys):
+
+| Key | Meaning |
+| --- | --- |
+| `disable` | Account disable flag. Must be the string `"0"` or `"1"`. |
+| `userpassword` | New password. Must be pre-hashed and start with the `{SSHA}` prefix; plaintext is rejected. |
+| `altemate-email` | Personal alternate email. Note: the misspelling is intentional and matches the production directory schema; do not "correct" it. |
+| `temppassword` | Temporary password (free-form string). |
+
+Any subset of the four keys may be provided; omitted keys are left untouched. At least one key must be present.
+
+Request body:
+
+```json
+{
+	"subject_id": "0856001",
+	"attrs": {
+		"disable": "0",
+		"userpassword": "{SSHA}base64-of-sha1-plus-salt",
+		"altemate-email": "user@example.com",
+		"temppassword": "NTLM:deadbeef"
+	}
+}
+```
+
+Success response (200):
+
+```json
+{
+	"modified": ["disable", "userpassword", "altemate-email", "temppassword"]
+}
+```
+
+- `modified` lists the attribute keys that were applied, in the canonical wire order shown above. The key spellings (including `altemate-email`) are preserved verbatim.
+
+Common errors:
+
+| Status | Type | Triggered by |
+| --- | --- | --- |
+| 400 | /problems/invalid-request | Missing/empty `subject_id`, no attrs supplied, or malformed JSON. |
+| 400 | /problems/invalid-username | `subject_id` fails username validation (regex, length, injection vectors). |
+| 400 | /problems/invalid-attr-value | `disable` not in {`"0"`,`"1"`}, or `userpassword` missing the `{SSHA}` prefix. |
+| 401 | /problems/unauthorized | Missing or invalid `X-Api-Key`. |
+| 404 | /problems/not-found | Subject not found in either LDAP source. |
+| 409 | /problems/schema-violation | LDAP server rejected the modification (schema or constraint violation). |
+| 500 | /problems/internal-error | Both LDAP sources unreachable. |
+
+Security notes:
+
+- Passwords are never logged. Pre-hash with `{SSHA}` on the caller side; the service does not hash plaintext.
+- The subject is located by search-then-modify on a single pooled connection; the bind DN must have write ACLs on the target subtree.
+- Schema-violation responses are authoritative and do not fall over to the other LDAP source.
+
 ## Error Response Format
 
 Error responses use RFC 7807 with content type application/problem+json.
@@ -296,6 +367,22 @@ curl -sS -X POST "$BASE_URL/api/v1/ldap/authenticate" \
 	-H "Content-Type: application/json" \
 	-H "X-Api-Key: $API_KEY" \
 	-d '{"username":"110550001","password":"your-password"}'
+```
+
+6. Modify attributes (write):
+
+```bash
+curl -sS -X POST "$BASE_URL/api/v1/ldap/modify" \
+	-H "Content-Type: application/json" \
+	-H "X-Api-Key: $API_KEY" \
+	-d '{
+	  "subject_id": "0856001",
+	  "attrs": {
+	    "disable": "0",
+	    "userpassword": "{SSHA}base64-of-sha1-plus-salt",
+	    "altemate-email": "user@example.com"
+	  }
+	}'
 ```
 
 ## Integration Notes
