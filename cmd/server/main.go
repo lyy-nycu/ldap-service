@@ -97,9 +97,10 @@ func main() {
 	repo := infraldap.NewRepository(internalPool, externalPool, logger)
 	lookupUC := usecase.NewLookupService(repo)
 	authUC := usecase.NewAuthenticateService(repo, logger)
+	modifyUC := usecase.NewModifyService(repo)
 	rateLimiter := middleware.NewRateLimiter(cfg.AuthRateLimit, time.Duration(cfg.AuthRateCleanupMin)*time.Minute)
 
-	router := handler.NewRouter(repo, lookupUC, authUC, cfg.APIKeys, rateLimiter, logger)
+	router := handler.NewRouter(repo, lookupUC, authUC, modifyUC, cfg.APIKeys, rateLimiter, logger)
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: router,

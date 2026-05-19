@@ -151,6 +151,26 @@ type LDAPPool interface {
 	//   - MUST return nil if healthy, error if unreachable
 	HealthCheck(ctx context.Context) error
 
+	// Modify atomically replaces the given attributes on the subject
+	// identified by username on this LDAP server.
+	//
+	// Acceptance criteria:
+	//   - MUST first resolve subjectID → DN via the same filter Search uses
+	//     (cn=<EscapeFilter(subjectID)>), scope = WholeSubtree, base = baseDN
+	//   - MUST return ErrAccountNotFound if no entry matches
+	//   - MUST issue ONE upstream `ldap.Modify` call (atomicity invariant)
+	//   - The Modify request MUST contain exactly one `replace` op per
+	//     entry in attrs, using attr.Name verbatim (no key rewriting —
+	//     in particular "altemate-email" must reach LDAP as-is)
+	//   - MUST use the borrowed pool connection (read-only bind is fine
+	//     for modify if the pool's bindDN has write ACLs)
+	//   - MUST propagate context for cancellation
+	//   - MUST NOT log any attribute value (passwords pass through here)
+	//   - On LDAP error: return ErrSchemaViolation if the upstream code
+	//     is constraint/schema/object-class related; otherwise the raw
+	//     transport error so Repository can decide on ErrServiceUnavailable
+	Modify(ctx context.Context, subjectID string, attrs []ModifyAttr) error
+
 	// Close drains and closes all connections in this pool.
 	//
 	// Acceptance criteria:
@@ -201,6 +221,19 @@ type LDAPRepository interface {
 	//   - MUST return nil only if BOTH are healthy
 	//   - MUST return ErrServiceUnavailable if either is unhealthy
 	HealthCheck(ctx context.Context) error
+
+	// Modify atomically replaces the given attributes on the subject
+	// identified by subjectID, fanning out across both LDAP sources.
+	//
+	// Acceptance criteria:
+	//   - MUST try internal pool first (search-then-modify on same pool)
+	//   - On ErrAccountNotFound from internal, MUST try external pool
+	//   - MUST return ErrAccountNotFound only if BOTH sources return not found
+	//   - On connection error from internal, MUST log and still try external
+	//   - On ErrSchemaViolation, MUST propagate it (do NOT fall over to
+	//     the other pool — schema rejection is authoritative)
+	//   - MUST NOT log attribute values (passwords pass through here)
+	Modify(ctx context.Context, subjectID string, attrs []ModifyAttr) error
 }
 
 // ---------------------------------------------------------------------------

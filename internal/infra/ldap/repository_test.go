@@ -19,12 +19,16 @@ type mockPool struct {
 	searchFn      func(ctx context.Context, username string, attributes []string) (*domain.Account, error)
 	bindFn        func(ctx context.Context, dn string, password string) error
 	healthCheckFn func(ctx context.Context) error
+	modifyFn      func(ctx context.Context, subjectID string, attrs []domain.ModifyAttr) error
 	closeFn       func() error
 
 	searchCalls    int32
 	bindCalls      int32
+	modifyCalls    int32
 	lastBindDN     string
 	lastBindPW     string
+	lastModifySubject string
+	lastModifyAttrs   []domain.ModifyAttr
 }
 
 func (m *mockPool) Search(ctx context.Context, username string, attributes []string) (*domain.Account, error) {
@@ -55,6 +59,16 @@ func (m *mockPool) HealthCheck(ctx context.Context) error {
 func (m *mockPool) Close() error {
 	if m.closeFn != nil {
 		return m.closeFn()
+	}
+	return nil
+}
+
+func (m *mockPool) Modify(ctx context.Context, subjectID string, attrs []domain.ModifyAttr) error {
+	atomic.AddInt32(&m.modifyCalls, 1)
+	m.lastModifySubject = subjectID
+	m.lastModifyAttrs = attrs
+	if m.modifyFn != nil {
+		return m.modifyFn(ctx, subjectID, attrs)
 	}
 	return nil
 }

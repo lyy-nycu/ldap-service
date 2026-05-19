@@ -47,6 +47,10 @@ func (m *mockRepo) HealthCheck(ctx context.Context) error {
 	return m.healthErr
 }
 
+func (m *mockRepo) Modify(context.Context, string, []domain.ModifyAttr) error {
+	return nil
+}
+
 func TestLookupService_Lookup(t *testing.T) {
 	tests := []struct {
 		name       string

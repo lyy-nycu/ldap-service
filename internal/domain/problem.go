@@ -158,6 +158,40 @@ func NewInternalError(detail, instance string) *Problem {
 	}
 }
 
+// NewInvalidAttrValue creates a 400 Problem for attribute values that
+// fail producer-side validation (e.g. disable not in {"0","1"},
+// userpassword missing the "{SSHA}" prefix).
+//
+// Acceptance criteria:
+//   - Type: "/problems/invalid-attr-value"
+//   - Status: 400
+func NewInvalidAttrValue(detail, instance string) *Problem {
+	return &Problem{
+		Type:     "/problems/invalid-attr-value",
+		Title:    "Invalid attribute value",
+		Status:   400,
+		Detail:   detail,
+		Instance: instance,
+	}
+}
+
+// NewSchemaViolation creates a 409 Problem for upstream LDAP rejections
+// (schema violation, constraint, password-reuse policy, missing
+// objectClass). The consumer adapter maps 409 → ErrUpstream.
+//
+// Acceptance criteria:
+//   - Type: "/problems/schema-violation"
+//   - Status: 409
+func NewSchemaViolation(detail, instance string) *Problem {
+	return &Problem{
+		Type:     "/problems/schema-violation",
+		Title:    "LDAP schema violation",
+		Status:   409,
+		Detail:   detail,
+		Instance: instance,
+	}
+}
+
 // NewServiceUnavailable creates a 503 Problem when LDAP servers are unreachable.
 //
 // Acceptance criteria:
