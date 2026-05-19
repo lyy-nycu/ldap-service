@@ -1,9 +1,9 @@
 # ldap-attribute-whitelist-extension Specification
 
 ## Purpose
-Define and maintain whitelist requirements for LDAP lookup attributes, including support for `fullname` and `initials`, while preserving existing attribute restrictions and behavior.
+Define and maintain whitelist requirements for LDAP lookup attributes, including support for `fullName` and `initials`, while preserving existing attribute restrictions and behavior.
 ## Requirements
-### Requirement: Lookup attribute whitelist supports fullname and initials
+### Requirement: Lookup attribute whitelist supports fullName and initials
 The system MUST treat `fullName` (camelCase, matching directory schema) and `initials` as allowed LDAP lookup attributes for both single lookup and batch lookup requests. The legacy lowercase form `fullname` MUST be rejected.
 
 #### Scenario: Single lookup requests fullName and initials
@@ -35,7 +35,7 @@ The system MUST NOT introduce runtime mapping from `displayName` (or any other a
 - **THEN** validation MUST return `ErrAttributeNotAllowed`
 
 ### Requirement: Existing attribute restrictions remain enforced
-The system MUST continue rejecting non-whitelisted attributes after adding `fullname` and `initials`.
+The system MUST continue rejecting non-whitelisted attributes after adding `fullName` and `initials`.
 
 #### Scenario: Sensitive or unknown attribute is requested
 - **WHEN** a caller requests an attribute outside the updated whitelist
@@ -47,7 +47,7 @@ The system MUST keep documentation and tests aligned with the updated whitelist 
 
 #### Scenario: Whitelist documentation and tests are reviewed
 - **WHEN** project documentation and tests are updated for this change
-- **THEN** `fullname` and `initials` MUST appear in allowed-attribute references
+- **THEN** `fullName` and `initials` MUST appear in allowed-attribute references
 - **AND** table-driven tests MUST include positive coverage for these new attributes
 
 ### Requirement: Lookup attribute whitelist supports the Alternate-Email custom attribute

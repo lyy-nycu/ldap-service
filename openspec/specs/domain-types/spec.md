@@ -26,7 +26,7 @@ The system SHALL define constants `SourceInternal = "internal"` and `SourceExter
 - **THEN** it SHALL use the domain constants, not string literals
 
 ### Requirement: Attribute whitelist
-The system SHALL define an `AllowedAttributes` set in `internal/domain/domain.go` containing exactly: `cn`, `uid`, `sn`, `givenName`, `dept`, `deptCode`, `employeeStatus`, `title`, `ou`, `mobile`, `mail`, `alternative-mail`.
+The system SHALL define an `AllowedAttributes` set in `internal/domain/domain.go` containing exactly the following 19 entries: `cn`, `uid`, `sn`, `givenName`, `fullName`, `initials`, `dept`, `employeeStatus`, `title`, `ou`, `mobile`, `mail`, `Alternate-Email`, `birthday`, `departmentNumber`, `description`, `disable`, `idno`, `originEmail`. Matching MUST be exact-string and case-sensitive; the legacy forms `fullname` (lowercase), `alternative-mail`, and `deptCode` MUST be rejected.
 
 #### Scenario: Validate allowed attribute
 - **WHEN** a caller requests attributes `["mail", "mobile"]`
