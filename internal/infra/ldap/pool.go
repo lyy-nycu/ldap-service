@@ -20,6 +20,7 @@ import (
 type ldapConn interface {
 	Search(searchRequest *ldapv3.SearchRequest) (*ldapv3.SearchResult, error)
 	Bind(username, password string) error
+	Modify(modifyRequest *ldapv3.ModifyRequest) error
 	Close() error
 	IsClosing() bool
 }

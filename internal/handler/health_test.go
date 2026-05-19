@@ -36,6 +36,10 @@ func (m *mockHealthRepo) Close() error {
 	return nil
 }
 
+func (m *mockHealthRepo) Modify(context.Context, string, []domain.ModifyAttr) error {
+	return nil
+}
+
 func TestHandleHealthz(t *testing.T) {
 	tests := []struct {
 		name       string

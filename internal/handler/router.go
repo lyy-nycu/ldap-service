@@ -18,6 +18,7 @@ import (
 //   - POST /api/v1/ldap/lookup        → HandleLookup(lookupUC)        — APIKey middleware
 //   - POST /api/v1/ldap/lookup/batch  → HandleBatchLookup(lookupUC)   — APIKey middleware
 //   - POST /api/v1/ldap/authenticate  → HandleAuthenticate(authUC)    — APIKey + RateLimit middleware
+//   - POST /api/v1/ldap/modify        → HandleModify(modifyUC)        — APIKey middleware
 //   - Middleware chain order: RequestID → Logger → (APIKey for /api/) → (RateLimit for authenticate) → Handler
 //   - Health endpoints MUST NOT require API key
 //   - Rate limiting MUST only apply to the authenticate endpoint
@@ -25,6 +26,7 @@ func NewRouter(
 	repo domain.LDAPRepository,
 	lookupUC domain.LookupUseCase,
 	authUC domain.AuthenticateUseCase,
+	modifyUC domain.ModifyUseCase,
 	keys map[string]string,
 	rateLimiter *middleware.RateLimiter,
 	logger *zap.Logger,
@@ -61,6 +63,12 @@ func NewRouter(
 	authenticate = middleware.Logger(logger)(authenticate)
 	authenticate = middleware.RequestID(authenticate)
 	mux.Handle("POST /api/v1/ldap/authenticate", authenticate)
+
+	modify := http.Handler(HandleModify(modifyUC))
+	modify = middleware.APIKey(keys)(modify)
+	modify = middleware.Logger(logger)(modify)
+	modify = middleware.RequestID(modify)
+	mux.Handle("POST /api/v1/ldap/modify", modify)
 
 	return mux
 }
