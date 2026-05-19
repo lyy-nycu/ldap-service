@@ -43,6 +43,9 @@ func (m *mockAuthRepo) LookupBatch(context.Context, []string, []string) ([]*doma
 func (m *mockAuthRepo) HealthCheck(context.Context) error {
 	panic("HealthCheck should not be called in authenticate tests")
 }
+func (m *mockAuthRepo) Modify(context.Context, string, []domain.ModifyAttr) error {
+	panic("Modify should not be called in authenticate tests")
+}
 
 // ---------------------------------------------------------------------------
 // AuthenticateService — full locked tests (security-critical)

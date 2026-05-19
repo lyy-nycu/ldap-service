@@ -21,15 +21,18 @@ type mockConn struct {
 	mu           sync.Mutex
 	searchFn     func(*ldapv3.SearchRequest) (*ldapv3.SearchResult, error)
 	bindFn       func(string, string) error
+	modifyFn     func(*ldapv3.ModifyRequest) error
 	isClosingVal bool
 
-	closed       bool
-	closeCalls   int32
-	searchCalls  int32
-	bindCalls    int32
+	closed        bool
+	closeCalls    int32
+	searchCalls   int32
+	bindCalls     int32
+	modifyCalls   int32
 	lastSearchReq *ldapv3.SearchRequest
-	lastBindDN   string
-	lastBindPW   string
+	lastBindDN    string
+	lastBindPW    string
+	lastModifyReq *ldapv3.ModifyRequest
 }
 
 func (m *mockConn) Search(req *ldapv3.SearchRequest) (*ldapv3.SearchResult, error) {
@@ -65,6 +68,17 @@ func (m *mockConn) Close() error {
 
 func (m *mockConn) IsClosing() bool {
 	return m.isClosingVal
+}
+
+func (m *mockConn) Modify(req *ldapv3.ModifyRequest) error {
+	atomic.AddInt32(&m.modifyCalls, 1)
+	m.mu.Lock()
+	m.lastModifyReq = req
+	m.mu.Unlock()
+	if m.modifyFn != nil {
+		return m.modifyFn(req)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
