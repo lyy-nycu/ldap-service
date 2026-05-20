@@ -4,11 +4,22 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"os"
+	"strings"
 
 	ldapv3 "github.com/go-ldap/ldap/v3"
 	"github.com/nycuitsc/ldap-service/internal/domain"
 	"go.uber.org/zap"
 )
+
+// ldapTLSInsecureSkipVerify reports whether self-signed LDAPS certs should be
+// accepted. Controlled by the LDAP_TLS_INSECURE_SKIP_VERIFY env var. This is a
+// DEV/TEST-ONLY escape hatch for the docker-compose fixture which uses
+// auto-generated self-signed certs. NEVER enable in production.
+func ldapTLSInsecureSkipVerify() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("LDAP_TLS_INSECURE_SKIP_VERIFY")))
+	return v == "true" || v == "1" || v == "yes"
+}
 
 // ---------------------------------------------------------------------------
 // Internal interfaces — for testability
@@ -93,7 +104,13 @@ func NewPool(host string, port int, useTLS bool, bindDN, bindPW, baseDN, source 
 			err  error
 		)
 		if p.useTLS {
-			conn, err = ldapv3.DialURL(addr, ldapv3.DialWithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12}))
+			tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: p.host}
+			if ldapTLSInsecureSkipVerify() {
+				tlsCfg.InsecureSkipVerify = true
+				p.logger.Warn("ldap TLS certificate verification disabled (LDAP_TLS_INSECURE_SKIP_VERIFY) — never use in production",
+					zap.String("source", p.source))
+			}
+			conn, err = ldapv3.DialURL(addr, ldapv3.DialWithTLSConfig(tlsCfg))
 		} else {
 			conn, err = ldapv3.DialURL(addr)
 		}

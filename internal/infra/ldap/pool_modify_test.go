@@ -3,10 +3,13 @@ package ldap
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	ldapv3 "github.com/go-ldap/ldap/v3"
 	"github.com/nycuitsc/ldap-service/internal/domain"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // ---------------------------------------------------------------------------
@@ -176,6 +179,125 @@ func TestPool_Modify_SearchUsesEscapeFilter(t *testing.T) {
 	// sequence cannot survive.
 	if containsUnescaped(gotFilter, "evil)(uid=*") {
 		t.Errorf("subject_id reached LDAP filter unescaped: %q — must use ldapv3.EscapeFilter", gotFilter)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// relax-modify-userpassword — RED tests for the TLS precondition
+// (see openspec/changes/relax-modify-userpassword/specs/ldap-repository/spec.md)
+// ---------------------------------------------------------------------------
+
+// newTestPoolNonTLS returns a Pool identical to newTestPool but with
+// useTLS=false, so we can assert the per-request TLS gate on the
+// password-modify path.
+func newTestPoolNonTLS(t *testing.T, source string, initial []*mockConn) *Pool {
+	t.Helper()
+	p := newTestPool(t, source, initial, nil)
+	p.useTLS = false
+	return p
+}
+
+// TestPool_Modify_NonTLS_RefusesUserpassword: when the pool is configured
+// without TLS, a Modify request that contains userpassword MUST be
+// rejected with ErrServiceUnavailable and no Modify PDU may be sent.
+// The password value MUST NOT appear in any observed log entry.
+func TestPool_Modify_NonTLS_RefusesUserpassword(t *testing.T) {
+	conn := &mockConn{
+		searchFn: func(req *ldapv3.SearchRequest) (*ldapv3.SearchResult, error) {
+			return &ldapv3.SearchResult{
+				Entries: []*ldapv3.Entry{{DN: "uid=0856001,ou=student,o=nycu"}},
+			}, nil
+		},
+	}
+	p := newTestPoolNonTLS(t, domain.SourceInternal, []*mockConn{conn})
+
+	core, observed := observer.New(zap.ErrorLevel)
+	p.logger = zap.New(core)
+
+	const secret = "TLS-GATE-SECRET-TOKEN"
+	err := p.Modify(context.Background(), "0856001", []domain.ModifyAttr{
+		{Name: "userpassword", Value: secret},
+	})
+	if !errors.Is(err, domain.ErrServiceUnavailable) {
+		t.Fatalf("Modify() err = %v, want domain.ErrServiceUnavailable", err)
+	}
+	if conn.modifyCalls != 0 {
+		t.Errorf("ldap.Modify must NOT be called when TLS gate trips; got %d calls", conn.modifyCalls)
+	}
+	for _, entry := range observed.All() {
+		serialized := entry.Message
+		for _, f := range entry.Context {
+			serialized += " " + f.String
+		}
+		if strings.Contains(serialized, secret) {
+			t.Errorf("log entry leaked userpassword value: %q", serialized)
+		}
+	}
+	if observed.FilterMessage("refusing to send userpassword over non-TLS ldap connection").Len() == 0 {
+		t.Errorf("expected an error log entry explaining the TLS refusal; got: %v", observed.All())
+	}
+}
+
+// TestPool_Modify_NonTLS_AllowsNonPasswordModify: the TLS gate must NOT
+// affect modifications that do not include userpassword.
+func TestPool_Modify_NonTLS_AllowsNonPasswordModify(t *testing.T) {
+	conn := &mockConn{
+		searchFn: func(req *ldapv3.SearchRequest) (*ldapv3.SearchResult, error) {
+			return &ldapv3.SearchResult{
+				Entries: []*ldapv3.Entry{{DN: "uid=0856001,ou=student,o=nycu"}},
+			}, nil
+		},
+	}
+	p := newTestPoolNonTLS(t, domain.SourceInternal, []*mockConn{conn})
+
+	err := p.Modify(context.Background(), "0856001", []domain.ModifyAttr{
+		{Name: "disable", Value: "1"},
+		{Name: "altemate-email", Value: "user@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("Modify() err = %v, want nil (TLS gate only applies to userpassword)", err)
+	}
+	if conn.modifyCalls != 1 {
+		t.Errorf("ldap.Modify calls = %d, want 1", conn.modifyCalls)
+	}
+}
+
+// TestPool_Modify_TLS_ForwardsUserpasswordVerbatim: when TLS is on,
+// userpassword is forwarded byte-for-byte to the Replace op, for both
+// plaintext and {scheme} values.
+func TestPool_Modify_TLS_ForwardsUserpasswordVerbatim(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "plaintext", value: "p4ssw0rd!"},
+		{name: "ssha", value: "{SSHA}abc=="},
+		{name: "argon2", value: "{ARGON2}$argon2id$v=19$..."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &mockConn{
+				searchFn: func(req *ldapv3.SearchRequest) (*ldapv3.SearchResult, error) {
+					return &ldapv3.SearchResult{
+						Entries: []*ldapv3.Entry{{DN: "uid=0856001,ou=student,o=nycu"}},
+					}, nil
+				},
+			}
+			p := newTestPool(t, domain.SourceInternal, []*mockConn{conn}, nil)
+			if err := p.Modify(context.Background(), "0856001", []domain.ModifyAttr{
+				{Name: "userpassword", Value: tc.value},
+			}); err != nil {
+				t.Fatalf("Modify() err = %v", err)
+			}
+			req := conn.lastModifyReq
+			if req == nil || len(req.Changes) != 1 {
+				t.Fatalf("expected exactly one Replace op, got %+v", req)
+			}
+			vals := req.Changes[0].Modification.Vals
+			if len(vals) != 1 || vals[0] != tc.value {
+				t.Errorf("Replace vals = %v, want [%q] (forward verbatim, no client-side hashing)", vals, tc.value)
+			}
+		})
 	}
 }
 

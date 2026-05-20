@@ -203,6 +203,49 @@ func TestHandleModify_ErrorMapping(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// relax-modify-userpassword — RED tests for plaintext userpassword
+// (see openspec/changes/relax-modify-userpassword/specs/http-handlers/spec.md)
+// ---------------------------------------------------------------------------
+
+// TestHandleModify_Plaintext_Accepted: a plaintext userpassword payload
+// must reach the use case verbatim and return HTTP 200.
+func TestHandleModify_Plaintext_Accepted(t *testing.T) {
+	uc := &mockModifyUseCase{result: &domain.ModifyResult{Modified: []string{"userpassword"}}}
+	h := HandleModify(uc)
+	body := `{"subject_id":"0856001","attrs":{"userpassword":"Correct-Horse-Battery-Staple"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ldap/modify", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if uc.gotAttrs.UserPassword != "Correct-Horse-Battery-Staple" {
+		t.Errorf("attrs.userpassword = %q, want plaintext forwarded verbatim", uc.gotAttrs.UserPassword)
+	}
+}
+
+// TestHandleModify_Plaintext_NullByte_DoesNotLeakValue: a plaintext
+// userpassword carrying a NUL byte must return 400 invalid-attr-value
+// and the response body (problem.detail) MUST NOT contain any prefix
+// of the offending password.
+func TestHandleModify_Plaintext_NullByte_DoesNotLeakValue(t *testing.T) {
+	uc := &mockModifyUseCase{err: domain.ErrInvalidAttrValue, result: &domain.ModifyResult{}}
+	h := HandleModify(uc)
+	// Use a recognizable token that should NEVER appear in the
+	// outbound problem-detail body even though the use case rejected.
+	body := `{"subject_id":"0856001","attrs":{"userpassword":"SECRETTOKEN\u0000more"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ldap/modify", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "SECRETTOKEN") {
+		t.Fatalf("response body leaks user-supplied password substring: %s", rec.Body.String())
+	}
+}
+
 func TestHandleModify_AdditiveOnly_DoesNotAffectLookupOrAuthenticate(t *testing.T) {
 	// Belt-and-suspenders guard for Hard Rule #3 ("additive only"): the
 	// modify handler must dispatch only to the ModifyUseCase injected

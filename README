@@ -257,7 +257,7 @@ Writable attributes (request body keys):
 | Key | Meaning |
 | --- | --- |
 | `disable` | Account disable flag. Must be the string `"0"` or `"1"`. |
-| `userpassword` | New password. Must be pre-hashed and start with the `{SSHA}` prefix; plaintext is rejected. |
+| `userpassword` | New password. Plaintext is the recommended shape — OpenLDAP applies its configured `password-hash` directive and `ppolicy` overlay (history + quality). Pre-hashed values of the form `{SCHEME}…` (e.g. `{SSHA}`, `{ARGON2}`) are also accepted and forwarded verbatim for admin-reset / migration tooling. |
 | `altemate-email` | Personal alternate email. Note: the misspelling is intentional and matches the production directory schema; do not "correct" it. |
 | `temppassword` | Temporary password (free-form string). |
 
@@ -270,7 +270,7 @@ Request body:
 	"subject_id": "0856001",
 	"attrs": {
 		"disable": "0",
-		"userpassword": "{SSHA}base64-of-sha1-plus-salt",
+		"userpassword": "Correct-Horse-Battery-Staple",
 		"altemate-email": "user@example.com",
 		"temppassword": "NTLM:deadbeef"
 	}
@@ -293,15 +293,18 @@ Common errors:
 | --- | --- | --- |
 | 400 | /problems/invalid-request | Missing/empty `subject_id`, no attrs supplied, or malformed JSON. |
 | 400 | /problems/invalid-username | `subject_id` fails username validation (regex, length, injection vectors). |
-| 400 | /problems/invalid-attr-value | `disable` not in {`"0"`,`"1"`}, or `userpassword` missing the `{SSHA}` prefix. |
+| 400 | /problems/invalid-attr-value | `disable` not in {`"0"`,`"1"`}, or plaintext `userpassword` is empty, longer than 256 bytes, or contains NUL / C0 control characters / DEL. |
 | 401 | /problems/unauthorized | Missing or invalid `X-Api-Key`. |
 | 404 | /problems/not-found | Subject not found in either LDAP source. |
-| 409 | /problems/schema-violation | LDAP server rejected the modification (schema or constraint violation). |
-| 500 | /problems/internal-error | Both LDAP sources unreachable. |
+| 409 | /problems/schema-violation | LDAP server rejected the modification (schema or constraint violation, including ppolicy quality / history checks on plaintext passwords). |
+| 500 | /problems/internal-error | Both LDAP sources unreachable, or the modify carries `userpassword` and the LDAP connection is not TLS (the service refuses to send a password in the clear). |
 
 Security notes:
 
-- Passwords are never logged. Pre-hash with `{SSHA}` on the caller side; the service does not hash plaintext.
+- **TLS is mandatory for password writes.** If the configured LDAP connection is not TLS, requests carrying `userpassword` are refused with 500. Other attribute writes still succeed.
+- **The service never hashes.** Plaintext is forwarded byte-for-byte; slapd's `password-hash` directive decides the storage scheme. This lets `ppolicy` enforce `pwdInHistory` and `pwdCheckQuality`, which client-side hashing breaks.
+- **`{scheme}` pass-through skips ppolicy quality checks** by design (slapd cannot inspect a pre-hashed value). Use it only for admin-reset flows that intentionally bypass quality rules.
+- The Problem Details `detail` field never contains the submitted `userpassword` value (nor any prefix, suffix, or length of it).
 - The subject is located by search-then-modify on a single pooled connection; the bind DN must have write ACLs on the target subtree.
 - Schema-violation responses are authoritative and do not fall over to the other LDAP source.
 
@@ -379,7 +382,7 @@ curl -sS -X POST "$BASE_URL/api/v1/ldap/modify" \
 	  "subject_id": "0856001",
 	  "attrs": {
 	    "disable": "0",
-	    "userpassword": "{SSHA}base64-of-sha1-plus-salt",
+	    "userpassword": "Correct-Horse-Battery-Staple",
 	    "altemate-email": "user@example.com"
 	  }
 	}'
