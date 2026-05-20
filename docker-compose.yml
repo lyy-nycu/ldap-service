@@ -6,8 +6,11 @@ services:
       LDAP_DOMAIN: "nycu"
       LDAP_BASE_DN: "dc=nycu"
       LDAP_ADMIN_PASSWORD: "adminpass"
+      LDAP_TLS: "true"
+      LDAP_TLS_VERIFY_CLIENT: "never"
     ports:
       - "3891:389"
+      - "6361:636"
     healthcheck:
       test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost:389 -D 'cn=admin,dc=nycu' -w 'adminpass' -b 'dc=nycu' -s base '(objectClass=*)' dn >/dev/null 2>&1"]
       interval: 5s
@@ -24,8 +27,11 @@ services:
       LDAP_DOMAIN: "nycu"
       LDAP_BASE_DN: "dc=nycu"
       LDAP_ADMIN_PASSWORD: "adminpass"
+      LDAP_TLS: "true"
+      LDAP_TLS_VERIFY_CLIENT: "never"
     ports:
       - "3892:389"
+      - "6362:636"
     healthcheck:
       test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost:389 -D 'cn=admin,dc=nycu' -w 'adminpass' -b 'dc=nycu' -s base '(objectClass=*)' dn >/dev/null 2>&1"]
       interval: 5s
