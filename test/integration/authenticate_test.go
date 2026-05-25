@@ -15,7 +15,7 @@ import (
 // TestAuthenticate verifies authentication against real LDAP.
 //
 // Acceptance criteria:
-//   - Correct password MUST return 200 with {"authenticated":true}
+//   - Correct password MUST return 200 with {"user_id":"...","account_state":"...","password_state":"..."}
 //   - Wrong password MUST return 401 with generic error (RFC 7807)
 //   - Response for wrong password MUST NOT contain the password string
 //   - Response for wrong password MUST be identical structure regardless of failure reason
@@ -43,7 +43,7 @@ func TestAuthenticate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Acceptance criteria:
 			//   - Send POST /api/v1/ldap/authenticate with body {"username": ..., "password": ...}
-			//   - For 200: verify body contains {"authenticated":true}
+			//   - For 200: verify body contains user_id, account_state, password_state
 			//   - For 401 (wrong password vs not found): verify response bodies are identical structure
 			//   - For 401: verify response body does NOT contain the password string
 			//   - For 401: verify Content-Type is application/problem+json
@@ -68,12 +68,20 @@ func TestAuthenticate(t *testing.T) {
 				if err := json.Unmarshal(bodyBytes, &got); err != nil {
 					t.Fatalf("failed to decode success response: %v", err)
 				}
-				authVal, ok := got["authenticated"].(bool)
-				if !ok {
-					t.Fatal("success response missing authenticated field")
+				if !tt.wantAuth {
+					t.Fatalf("test misconfigured: wantCode=200 but wantAuth=false")
 				}
-				if authVal != tt.wantAuth {
-					t.Fatalf("authenticated = %v, want %v", authVal, tt.wantAuth)
+				uid, ok := got["user_id"].(string)
+				if !ok || uid == "" {
+					t.Fatalf("success response missing user_id field, got: %v", got)
+				}
+				acct, ok := got["account_state"].(string)
+				if !ok || acct == "" {
+					t.Fatalf("success response missing account_state field, got: %v", got)
+				}
+				pw, ok := got["password_state"].(string)
+				if !ok || pw == "" {
+					t.Fatalf("success response missing password_state field, got: %v", got)
 				}
 				return
 			}

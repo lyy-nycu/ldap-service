@@ -82,13 +82,13 @@ func TestModify_PasswordReplace(t *testing.T) {
 		t.Fatalf("authenticate with new password: status = %d, want 200, body = %s", authResp.StatusCode, body)
 	}
 	var authBody struct {
-		Authenticated bool `json:"authenticated"`
+		UserID string `json:"user_id"`
 	}
 	if err := json.NewDecoder(authResp.Body).Decode(&authBody); err != nil {
 		t.Fatalf("decode authenticate response: %v", err)
 	}
-	if !authBody.Authenticated {
-		t.Fatalf("authenticated = false after password modify; SSHA was not accepted by upstream LDAP")
+	if authBody.UserID == "" {
+		t.Fatalf("user_id missing in 200 response after password modify; new password was not accepted by upstream LDAP")
 	}
 
 	// Verify the OLD password no longer works (defensive — guards
@@ -99,13 +99,7 @@ func TestModify_PasswordReplace(t *testing.T) {
 	}, true)
 	defer oldAuthResp.Body.Close()
 	if oldAuthResp.StatusCode == http.StatusOK {
-		var oldBody struct {
-			Authenticated bool `json:"authenticated"`
-		}
-		_ = json.NewDecoder(oldAuthResp.Body).Decode(&oldBody)
-		if oldBody.Authenticated {
-			t.Fatalf("old password still works after modify; replace op did not take effect")
-		}
+		t.Fatalf("old password still works after modify; replace op did not take effect")
 	}
 }
 
@@ -237,11 +231,11 @@ func TestModify_PlaintextPassword_ServerSideHashing(t *testing.T) {
 		t.Fatalf("authenticate(plaintext-new) status = %d, want 200 (slapd should have hashed plaintext); body = %s", authResp.StatusCode, body)
 	}
 	var ar struct {
-		Authenticated bool `json:"authenticated"`
+		UserID string `json:"user_id"`
 	}
 	_ = json.NewDecoder(authResp.Body).Decode(&ar)
-	if !ar.Authenticated {
-		t.Fatalf("authenticated = false, want true — slapd did not hash the plaintext (check the server's password-hash directive)")
+	if ar.UserID == "" {
+		t.Fatalf("user_id missing in 200 response — slapd did not hash the plaintext (check the server's password-hash directive)")
 	}
 }
 
