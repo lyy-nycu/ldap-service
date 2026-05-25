@@ -32,6 +32,46 @@ type Account struct {
 }
 
 // ---------------------------------------------------------------------------
+// Authenticate result types
+// ---------------------------------------------------------------------------
+
+// AccountState describes the post-bind status of an account. Returned in the
+// 200 body of POST /api/v1/ldap/authenticate so callers (e.g. portal-backend)
+// can map LDAP truth to their own HTTP policy (401 vs 403).
+//
+// IMPORTANT: this value is only ever populated when the bind itself
+// succeeded. A bind failure produces NO result and is reported as 401 with
+// the standard ErrAuthenticationFailed problem — see the no-enumeration
+// invariant on AuthenticateUseCase.Authenticate.
+type AccountState string
+
+const (
+	AccountStateActive             AccountState = "active"
+	AccountStateDisabled           AccountState = "disabled"
+	AccountStatePendingActivation  AccountState = "pending_activation"
+	AccountStateLocked             AccountState = "locked"
+)
+
+// PasswordState describes the post-bind status of the user's password.
+// Same emission rules as AccountState — only returned alongside a 200.
+type PasswordState string
+
+const (
+	PasswordStateCurrent    PasswordState = "current"
+	PasswordStateExpired    PasswordState = "expired"
+	PasswordStateMustChange PasswordState = "must_change"
+)
+
+// AuthenticateResult is the success-path payload of an authenticate call.
+// It is ONLY returned when the LDAP bind succeeded. The HTTP layer
+// serializes the public fields as the 200 response body.
+type AuthenticateResult struct {
+	UID           string        `json:"user_id"`
+	AccountState  AccountState  `json:"account_state"`
+	PasswordState PasswordState `json:"password_state"`
+}
+
+// ---------------------------------------------------------------------------
 // Attribute whitelist
 // ---------------------------------------------------------------------------
 
@@ -202,17 +242,23 @@ type LDAPRepository interface {
 	//   - MUST NOT fail the entire batch if some usernames are not found
 	LookupBatch(ctx context.Context, usernames []string, attributes []string) ([]*Account, []string, error)
 
-	// Authenticate verifies a user's password via LDAP bind.
+	// Authenticate verifies a user's password via LDAP bind and reports the
+	// account / password state of the bound user.
 	//
 	// Acceptance criteria:
 	//   - MUST search internal pool first to find the user's DN
 	//   - If not found in internal, MUST search external pool
 	//   - MUST bind against the SAME pool that found the user
-	//   - MUST return (true, nil) on successful bind
-	//   - MUST return (false, nil) for all failures (not found, wrong password)
-	//   - MUST NOT return (false, error) that reveals the failure reason to callers
+	//   - On successful bind: MUST return (*AuthenticateResult, nil) with
+	//     AccountState and PasswordState derived from the LDAP entry's
+	//     `disable`, `pwdReset` and `pwdChangedTime` attributes
+	//   - MUST return (nil, nil) for ALL failure cases (not found, wrong
+	//     password, both sources unavailable). The nil result is the sole
+	//     failure signal — never an error that reveals the reason
 	//   - MUST NOT log the password
-	Authenticate(ctx context.Context, username string, password string) (bool, error)
+	//   - MUST request the state attributes via Search; these attributes
+	//     are NOT part of AllowedAttributes (do not leak via Lookup)
+	Authenticate(ctx context.Context, username string, password string) (*AuthenticateResult, error)
 
 	// HealthCheck verifies both LDAP sources are reachable.
 	//
@@ -265,14 +311,19 @@ type LookupUseCase interface {
 // AuthenticateUseCase defines the business logic for LDAP authentication.
 // Handlers depend on this interface — never on the concrete implementation.
 type AuthenticateUseCase interface {
-	// Authenticate verifies a user's password.
+	// Authenticate verifies a user's password and returns the post-bind
+	// account / password state.
 	//
 	// Acceptance criteria:
 	//   - MUST validate username with ValidateUsername()
 	//   - MUST verify password is non-empty
-	//   - MUST return (false, ErrAuthenticationFailed) for ALL failure reasons:
-	//     invalid username, empty password, user not found, wrong password
+	//   - On success: MUST return (*AuthenticateResult, nil)
+	//   - On ANY failure (invalid username, empty password, user not found,
+	//     wrong password, repository error): MUST return
+	//     (nil, ErrAuthenticationFailed)
 	//   - MUST NOT reveal the specific failure reason in error or log
 	//   - MUST NOT log the password
-	Authenticate(ctx context.Context, username string, password string) (bool, error)
+	//   - The result.AccountState / PasswordState are policy-neutral here;
+	//     the HTTP layer surfaces them to the caller verbatim
+	Authenticate(ctx context.Context, username string, password string) (*AuthenticateResult, error)
 }

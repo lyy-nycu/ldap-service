@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/nycuitsc/ldap-service/internal/domain"
 	"go.uber.org/zap"
@@ -81,7 +82,16 @@ func newTestRepo(t *testing.T, internal, external *mockPool) (*Repository, *obse
 	t.Helper()
 	core, logs := observer.New(zap.WarnLevel)
 	logger := zap.New(core)
-	return NewRepository(internal, external, logger), logs
+	return NewRepository(internal, external, 0, logger), logs
+}
+
+// newTestRepoWithMaxAge returns a repository with a non-zero password max
+// age so the pwdChangedTime-based expiry check is active.
+func newTestRepoWithMaxAge(t *testing.T, internal, external *mockPool, maxAge time.Duration) (*Repository, *observer.ObservedLogs) {
+	t.Helper()
+	core, logs := observer.New(zap.WarnLevel)
+	logger := zap.New(core)
+	return NewRepository(internal, external, maxAge, logger), logs
 }
 
 func internalAccount(uid string) *domain.Account {
@@ -312,7 +322,11 @@ func TestRepository_LookupBatch_EmptyInput(t *testing.T) {
 func TestRepository_Authenticate_InternalUserSuccess(t *testing.T) {
 	acc := internalAccount("110550001")
 	internal := &mockPool{
-		searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		searchFn: func(_ context.Context, _ string, attrs []string) (*domain.Account, error) {
+			// MUST request state attributes so post-bind result can be built.
+			if !equalStrings(attrs, stateAttrs) {
+				t.Errorf("Search called with attrs %v, want %v", attrs, stateAttrs)
+			}
 			return acc, nil
 		},
 		// Bind succeeds (default)
@@ -320,12 +334,21 @@ func TestRepository_Authenticate_InternalUserSuccess(t *testing.T) {
 	external := &mockPool{}
 	repo, _ := newTestRepo(t, internal, external)
 
-	ok, err := repo.Authenticate(context.Background(), "110550001", "correct-pw")
+	result, err := repo.Authenticate(context.Background(), "110550001", "correct-pw")
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v, want nil", err)
 	}
-	if !ok {
-		t.Fatal("Authenticate() = false, want true")
+	if result == nil {
+		t.Fatal("Authenticate() = nil, want non-nil result")
+	}
+	if result.UID != acc.UID {
+		t.Errorf("result.UID = %q, want %q", result.UID, acc.UID)
+	}
+	if result.AccountState != domain.AccountStateActive {
+		t.Errorf("result.AccountState = %q, want %q (default active when disable attr absent)", result.AccountState, domain.AccountStateActive)
+	}
+	if result.PasswordState != domain.PasswordStateCurrent {
+		t.Errorf("result.PasswordState = %q, want %q", result.PasswordState, domain.PasswordStateCurrent)
 	}
 	// Bind MUST be called on the internal pool (same pool that found the user).
 	if atomic.LoadInt32(&internal.bindCalls) != 1 {
@@ -349,12 +372,15 @@ func TestRepository_Authenticate_ExternalUserSuccess(t *testing.T) {
 	}
 	repo, _ := newTestRepo(t, internal, external)
 
-	ok, err := repo.Authenticate(context.Background(), "alumni@example.com", "correct-pw")
+	result, err := repo.Authenticate(context.Background(), "alumni@example.com", "correct-pw")
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v, want nil", err)
 	}
-	if !ok {
-		t.Fatal("Authenticate() = false, want true")
+	if result == nil {
+		t.Fatal("Authenticate() = nil, want non-nil result")
+	}
+	if result.AccountState != domain.AccountStateActive || result.PasswordState != domain.PasswordStateCurrent {
+		t.Errorf("result = %+v, want active/current", result)
 	}
 	// Bind MUST be on external pool — the pool that found the user.
 	if atomic.LoadInt32(&external.bindCalls) != 1 {
@@ -368,8 +394,8 @@ func TestRepository_Authenticate_ExternalUserSuccess(t *testing.T) {
 	}
 }
 
-// TestRepository_Authenticate_WrongPassword — MUST return (false, nil), NOT
-// (false, error). The caller must not be able to distinguish wrong password
+// TestRepository_Authenticate_WrongPassword — MUST return (nil, nil), NOT
+// (nil, error). The caller must not be able to distinguish wrong password
 // from user not found.
 func TestRepository_Authenticate_WrongPassword(t *testing.T) {
 	acc := internalAccount("110550001")
@@ -383,28 +409,28 @@ func TestRepository_Authenticate_WrongPassword(t *testing.T) {
 	}
 	repo, _ := newTestRepo(t, internal, &mockPool{})
 
-	ok, err := repo.Authenticate(context.Background(), "110550001", "wrong-pw")
-	if ok {
-		t.Fatal("Authenticate() = true, want false (wrong password)")
+	result, err := repo.Authenticate(context.Background(), "110550001", "wrong-pw")
+	if result != nil {
+		t.Fatalf("Authenticate() = %+v, want nil (wrong password)", result)
 	}
-	// SECURITY: must return (false, nil) — no error that reveals the reason.
+	// SECURITY: must return (nil, nil) — no error that reveals the reason.
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v, want nil (must not reveal failure reason)", err)
 	}
 }
 
-// TestRepository_Authenticate_UserNotFound — MUST return (false, nil),
+// TestRepository_Authenticate_UserNotFound — MUST return (nil, nil),
 // identical to wrong password response.
 func TestRepository_Authenticate_UserNotFound(t *testing.T) {
 	internal := &mockPool{} // default not found
 	external := &mockPool{} // default not found
 	repo, _ := newTestRepo(t, internal, external)
 
-	ok, err := repo.Authenticate(context.Background(), "nobody", "any-pw")
-	if ok {
-		t.Fatal("Authenticate() = true, want false (user not found)")
+	result, err := repo.Authenticate(context.Background(), "nobody", "any-pw")
+	if result != nil {
+		t.Fatalf("Authenticate() = %+v, want nil (user not found)", result)
 	}
-	// SECURITY: must return (false, nil) — identical to wrong password.
+	// SECURITY: must return (nil, nil) — identical to wrong password.
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v, want nil (must not reveal failure reason)", err)
 	}
@@ -423,20 +449,20 @@ func TestRepository_Authenticate_InternalConnErrorFallsBackToExternal(t *testing
 	}}
 	repo, _ := newTestRepo(t, internal, external)
 
-	ok, err := repo.Authenticate(context.Background(), "user1", "correct-pw")
+	result, err := repo.Authenticate(context.Background(), "user1", "correct-pw")
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v, want nil", err)
 	}
-	if !ok {
-		t.Fatal("Authenticate() = false, want true (found in external after internal conn error)")
+	if result == nil {
+		t.Fatal("Authenticate() = nil, want non-nil (found in external after internal conn error)")
 	}
 	if atomic.LoadInt32(&external.bindCalls) != 1 {
 		t.Error("external.Bind was not called — must bind against external pool")
 	}
 }
 
-// TestRepository_Authenticate_BothSourcesDown — MUST return (false, nil),
-// NOT (false, ErrServiceUnavailable). Auth must never leak infrastructure state.
+// TestRepository_Authenticate_BothSourcesDown — MUST return (nil, nil),
+// NOT (nil, ErrServiceUnavailable). Auth must never leak infrastructure state.
 func TestRepository_Authenticate_BothSourcesDown(t *testing.T) {
 	connErr := errors.New("connection reset")
 	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
@@ -447,11 +473,11 @@ func TestRepository_Authenticate_BothSourcesDown(t *testing.T) {
 	}}
 	repo, _ := newTestRepo(t, internal, external)
 
-	ok, err := repo.Authenticate(context.Background(), "user1", "pw")
-	if ok {
-		t.Fatal("Authenticate() = true, want false")
+	result, err := repo.Authenticate(context.Background(), "user1", "pw")
+	if result != nil {
+		t.Fatalf("Authenticate() = %+v, want nil", result)
 	}
-	// SECURITY: Even service-unavailable must be masked as (false, nil).
+	// SECURITY: Even service-unavailable must be masked as (nil, nil).
 	if err != nil {
 		t.Fatalf("Authenticate() error = %v, want nil (must not reveal infrastructure state)", err)
 	}
@@ -479,6 +505,214 @@ func TestRepository_Authenticate_NeverLogsPassword(t *testing.T) {
 		}
 		if containsPassword(msg, password) {
 			t.Fatalf("log entry contains password: %q", entry.Message)
+		}
+	}
+}
+
+// equalStrings compares two string slices for equality (order-sensitive).
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// withAttrs returns an Account with state attributes set.
+func withAttrs(base *domain.Account, attrs map[string]string) *domain.Account {
+	copyAcc := *base
+	copyAcc.Attributes = attrs
+	return &copyAcc
+}
+
+// ---------------------------------------------------------------------------
+// Authenticate — account_state / password_state derivation
+// ---------------------------------------------------------------------------
+
+// TestRepository_Authenticate_AccountStatePending — disable=1 maps to pending_activation.
+func TestRepository_Authenticate_AccountStatePending(t *testing.T) {
+	acc := withAttrs(internalAccount("110550001"), map[string]string{"disable": "1"})
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, _ := newTestRepo(t, internal, &mockPool{})
+
+	result, err := repo.Authenticate(context.Background(), "110550001", "pw")
+	if err != nil || result == nil {
+		t.Fatalf("Authenticate() = (%+v, %v), want (result, nil)", result, err)
+	}
+	if result.AccountState != domain.AccountStatePendingActivation {
+		t.Errorf("AccountState = %q, want %q", result.AccountState, domain.AccountStatePendingActivation)
+	}
+	if result.PasswordState != domain.PasswordStateCurrent {
+		t.Errorf("PasswordState = %q, want %q", result.PasswordState, domain.PasswordStateCurrent)
+	}
+}
+
+// TestRepository_Authenticate_AccountStateActive — disable=0 maps to active.
+func TestRepository_Authenticate_AccountStateActive(t *testing.T) {
+	acc := withAttrs(internalAccount("110550001"), map[string]string{"disable": "0"})
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, _ := newTestRepo(t, internal, &mockPool{})
+
+	result, _ := repo.Authenticate(context.Background(), "110550001", "pw")
+	if result == nil || result.AccountState != domain.AccountStateActive {
+		t.Errorf("AccountState = %v, want active (disable=0)", result)
+	}
+}
+
+// TestRepository_Authenticate_PasswordMustChange — pwdReset=TRUE maps to must_change.
+func TestRepository_Authenticate_PasswordMustChange(t *testing.T) {
+	acc := withAttrs(internalAccount("u"), map[string]string{"pwdReset": "TRUE"})
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, _ := newTestRepo(t, internal, &mockPool{})
+
+	result, _ := repo.Authenticate(context.Background(), "u", "pw")
+	if result == nil || result.PasswordState != domain.PasswordStateMustChange {
+		t.Errorf("PasswordState = %+v, want must_change", result)
+	}
+}
+
+// TestRepository_Authenticate_PasswordMustChangeCaseInsensitive — pwdReset matches case-insensitively.
+func TestRepository_Authenticate_PasswordMustChangeCaseInsensitive(t *testing.T) {
+	acc := withAttrs(internalAccount("u"), map[string]string{"pwdReset": "true"})
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, _ := newTestRepo(t, internal, &mockPool{})
+
+	result, _ := repo.Authenticate(context.Background(), "u", "pw")
+	if result == nil || result.PasswordState != domain.PasswordStateMustChange {
+		t.Errorf("PasswordState = %+v, want must_change (case-insensitive TRUE)", result)
+	}
+}
+
+// TestRepository_Authenticate_PasswordExpired — pwdChangedTime past max-age maps to expired.
+func TestRepository_Authenticate_PasswordExpired(t *testing.T) {
+	// Two years ago, formatted as LDAP Generalized Time.
+	old := time.Now().Add(-2 * 365 * 24 * time.Hour).UTC().Format("20060102150405Z")
+	acc := withAttrs(internalAccount("u"), map[string]string{"pwdChangedTime": old})
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, _ := newTestRepoWithMaxAge(t, internal, &mockPool{}, 365*24*time.Hour) // 1y
+
+	result, _ := repo.Authenticate(context.Background(), "u", "pw")
+	if result == nil || result.PasswordState != domain.PasswordStateExpired {
+		t.Errorf("PasswordState = %+v, want expired (pwdChangedTime older than maxAge)", result)
+	}
+}
+
+// TestRepository_Authenticate_PasswordRecent — pwdChangedTime within max-age stays current.
+func TestRepository_Authenticate_PasswordRecent(t *testing.T) {
+	recent := time.Now().Add(-1 * time.Hour).UTC().Format("20060102150405Z")
+	acc := withAttrs(internalAccount("u"), map[string]string{"pwdChangedTime": recent})
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, _ := newTestRepoWithMaxAge(t, internal, &mockPool{}, 365*24*time.Hour)
+
+	result, _ := repo.Authenticate(context.Background(), "u", "pw")
+	if result == nil || result.PasswordState != domain.PasswordStateCurrent {
+		t.Errorf("PasswordState = %+v, want current (pwdChangedTime within maxAge)", result)
+	}
+}
+
+// TestRepository_Authenticate_PasswordExpiry_DisabledWhenMaxAgeZero —
+// with maxAge=0, old pwdChangedTime still produces current.
+func TestRepository_Authenticate_PasswordExpiry_DisabledWhenMaxAgeZero(t *testing.T) {
+	old := time.Now().Add(-100 * 365 * 24 * time.Hour).UTC().Format("20060102150405Z")
+	acc := withAttrs(internalAccount("u"), map[string]string{"pwdChangedTime": old})
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, _ := newTestRepo(t, internal, &mockPool{}) // maxAge=0
+
+	result, _ := repo.Authenticate(context.Background(), "u", "pw")
+	if result == nil || result.PasswordState != domain.PasswordStateCurrent {
+		t.Errorf("PasswordState = %+v, want current (maxAge=0 disables time check)", result)
+	}
+}
+
+// TestRepository_Authenticate_PasswordMalformed_FailsOpen — bad pwdChangedTime → current + warn.
+func TestRepository_Authenticate_PasswordMalformed_FailsOpen(t *testing.T) {
+	acc := withAttrs(internalAccount("u"), map[string]string{"pwdChangedTime": "not-a-timestamp"})
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, logs := newTestRepoWithMaxAge(t, internal, &mockPool{}, 365*24*time.Hour)
+
+	result, _ := repo.Authenticate(context.Background(), "u", "pw")
+	if result == nil || result.PasswordState != domain.PasswordStateCurrent {
+		t.Errorf("PasswordState = %+v, want current (fail-open on malformed timestamp)", result)
+	}
+	// Must log a warning for ops visibility.
+	found := false
+	for _, e := range logs.All() {
+		if e.Level == zap.WarnLevel && stringContains(e.Message, "pwdChangedTime") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected a warn log about pwdChangedTime parse failure")
+	}
+}
+
+// TestRepository_Authenticate_PwdResetBeatsExpired — pwdReset=TRUE takes
+// precedence over expiry (admin-forced reset is a stronger signal).
+func TestRepository_Authenticate_PwdResetBeatsExpired(t *testing.T) {
+	old := time.Now().Add(-2 * 365 * 24 * time.Hour).UTC().Format("20060102150405Z")
+	acc := withAttrs(internalAccount("u"), map[string]string{
+		"pwdReset":       "TRUE",
+		"pwdChangedTime": old,
+	})
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, _ := newTestRepoWithMaxAge(t, internal, &mockPool{}, 365*24*time.Hour)
+
+	result, _ := repo.Authenticate(context.Background(), "u", "pw")
+	if result == nil || result.PasswordState != domain.PasswordStateMustChange {
+		t.Errorf("PasswordState = %+v, want must_change (pwdReset wins over expired)", result)
+	}
+}
+
+// TestRepository_Authenticate_FallsBackToRequestUsernameForUID — if the
+// LDAP entry has no uid attribute, the request username is used as user_id.
+func TestRepository_Authenticate_FallsBackToRequestUsernameForUID(t *testing.T) {
+	acc := &domain.Account{
+		DN:     "uid=,ou=student,o=nycu",
+		UID:    "", // missing uid attr
+		Source: domain.SourceInternal,
+	}
+	internal := &mockPool{searchFn: func(_ context.Context, _ string, _ []string) (*domain.Account, error) {
+		return acc, nil
+	}}
+	repo, _ := newTestRepo(t, internal, &mockPool{})
+
+	result, _ := repo.Authenticate(context.Background(), "110550001", "pw")
+	if result == nil || result.UID != "110550001" {
+		t.Errorf("UID fallback = %+v, want request username", result)
+	}
+}
+
+// TestRepository_Authenticate_PwdPolicyAttrsNotInWhitelist verifies the new
+// ppolicy attributes (`pwdReset`, `pwdChangedTime`) used for password-state
+// derivation are NOT exposed via the public Lookup API surface. (The legacy
+// `disable` attribute is intentionally in the whitelist and is excluded.)
+func TestRepository_Authenticate_PwdPolicyAttrsNotInWhitelist(t *testing.T) {
+	for _, a := range []string{"pwdReset", "pwdChangedTime"} {
+		if domain.AllowedAttributes[a] {
+			t.Errorf("attribute %q must NOT be in domain.AllowedAttributes (would leak via Lookup)", a)
 		}
 	}
 }

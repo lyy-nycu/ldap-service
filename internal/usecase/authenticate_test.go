@@ -16,7 +16,7 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockAuthRepo struct {
-	authOK       bool
+	authResult   *domain.AuthenticateResult
 	authErr      error
 	authCalled   int
 	lastUsername  string
@@ -26,11 +26,11 @@ type mockAuthRepo struct {
 	domain.LDAPRepository
 }
 
-func (m *mockAuthRepo) Authenticate(ctx context.Context, username string, password string) (bool, error) {
+func (m *mockAuthRepo) Authenticate(ctx context.Context, username string, password string) (*domain.AuthenticateResult, error) {
 	m.authCalled++
 	m.lastUsername = username
 	m.lastPassword = password
-	return m.authOK, m.authErr
+	return m.authResult, m.authErr
 }
 
 // Override interface methods that shouldn't be called in auth tests.
@@ -52,13 +52,21 @@ func (m *mockAuthRepo) Modify(context.Context, string, []domain.ModifyAttr) erro
 // ---------------------------------------------------------------------------
 
 func TestAuthenticateService_Authenticate(t *testing.T) {
+	okResult := func(uid string) *domain.AuthenticateResult {
+		return &domain.AuthenticateResult{
+			UID:           uid,
+			AccountState:  domain.AccountStateActive,
+			PasswordState: domain.PasswordStateCurrent,
+		}
+	}
+
 	tests := []struct {
 		name       string
 		username   string
 		password   string
-		mockOK     bool
+		mockResult *domain.AuthenticateResult
 		mockErr    error
-		wantOK     bool
+		wantResult *domain.AuthenticateResult
 		wantErr    error
 		wantCalled bool // should repository be called?
 	}{
@@ -67,8 +75,8 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 			name:       "successful internal user auth",
 			username:   "110550001",
 			password:   "correct-pw",
-			mockOK:     true,
-			wantOK:     true,
+			mockResult: okResult("110550001"),
+			wantResult: okResult("110550001"),
 			wantErr:    nil,
 			wantCalled: true,
 		},
@@ -76,8 +84,8 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 			name:       "successful external user auth (email)",
 			username:   "alumni@example.com",
 			password:   "correct-pw",
-			mockOK:     true,
-			wantOK:     true,
+			mockResult: okResult("alumni@example.com"),
+			wantResult: okResult("alumni@example.com"),
 			wantErr:    nil,
 			wantCalled: true,
 		},
@@ -85,30 +93,66 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 			name:       "successful employee auth",
 			username:   "T1234",
 			password:   "correct-pw",
-			mockOK:     true,
-			wantOK:     true,
+			mockResult: okResult("T1234"),
+			wantResult: okResult("T1234"),
+			wantErr:    nil,
+			wantCalled: true,
+		},
+		// Success that propagates non-active states: must still be (result, nil).
+		// Policy translation to 403 happens upstream in portal-backend.
+		{
+			name:     "bind success, pending_activation propagates as success",
+			username: "110550001",
+			password: "correct-pw",
+			mockResult: &domain.AuthenticateResult{
+				UID:           "110550001",
+				AccountState:  domain.AccountStatePendingActivation,
+				PasswordState: domain.PasswordStateCurrent,
+			},
+			wantResult: &domain.AuthenticateResult{
+				UID:           "110550001",
+				AccountState:  domain.AccountStatePendingActivation,
+				PasswordState: domain.PasswordStateCurrent,
+			},
+			wantErr:    nil,
+			wantCalled: true,
+		},
+		{
+			name:     "bind success, password must_change propagates as success",
+			username: "T1234",
+			password: "correct-pw",
+			mockResult: &domain.AuthenticateResult{
+				UID:           "T1234",
+				AccountState:  domain.AccountStateActive,
+				PasswordState: domain.PasswordStateMustChange,
+			},
+			wantResult: &domain.AuthenticateResult{
+				UID:           "T1234",
+				AccountState:  domain.AccountStateActive,
+				PasswordState: domain.PasswordStateMustChange,
+			},
 			wantErr:    nil,
 			wantCalled: true,
 		},
 
-		// --- Failure cases: ALL must return (false, ErrAuthenticationFailed) ---
+		// --- Failure cases: ALL must return (nil, ErrAuthenticationFailed) ---
 		{
-			name:       "wrong password",
+			name:       "wrong password (repo returns nil, nil)",
 			username:   "110550001",
 			password:   "wrong",
-			mockOK:     false,
+			mockResult: nil,
 			mockErr:    nil,
-			wantOK:     false,
+			wantResult: nil,
 			wantErr:    domain.ErrAuthenticationFailed,
 			wantCalled: true,
 		},
 		{
-			name:       "user not found (repo returns false, nil)",
+			name:       "user not found (repo returns nil, nil)",
 			username:   "nonexistent",
 			password:   "pass",
-			mockOK:     false,
+			mockResult: nil,
 			mockErr:    nil,
-			wantOK:     false,
+			wantResult: nil,
 			wantErr:    domain.ErrAuthenticationFailed,
 			wantCalled: true,
 		},
@@ -116,9 +160,9 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 			name:       "repo returns unexpected error",
 			username:   "110550001",
 			password:   "pass",
-			mockOK:     false,
+			mockResult: nil,
 			mockErr:    errors.New("connection reset"),
-			wantOK:     false,
+			wantResult: nil,
 			wantErr:    domain.ErrAuthenticationFailed,
 			wantCalled: true,
 		},
@@ -128,7 +172,7 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 			name:       "invalid username (LDAP injection)",
 			username:   "bad)(user",
 			password:   "pass",
-			wantOK:     false,
+			wantResult: nil,
 			wantErr:    domain.ErrAuthenticationFailed,
 			wantCalled: false,
 		},
@@ -136,7 +180,7 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 			name:       "invalid username (wildcard)",
 			username:   "user*",
 			password:   "pass",
-			wantOK:     false,
+			wantResult: nil,
 			wantErr:    domain.ErrAuthenticationFailed,
 			wantCalled: false,
 		},
@@ -144,7 +188,7 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 			name:       "empty username",
 			username:   "",
 			password:   "pass",
-			wantOK:     false,
+			wantResult: nil,
 			wantErr:    domain.ErrAuthenticationFailed,
 			wantCalled: false,
 		},
@@ -152,7 +196,7 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 			name:       "empty password",
 			username:   "110550001",
 			password:   "",
-			wantOK:     false,
+			wantResult: nil,
 			wantErr:    domain.ErrAuthenticationFailed,
 			wantCalled: false,
 		},
@@ -160,20 +204,27 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 			name:       "whitespace-only password",
 			username:   "110550001",
 			password:   "   ",
-			wantOK:     false,
+			wantResult: nil,
 			wantErr:    domain.ErrAuthenticationFailed,
 			wantCalled: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &mockAuthRepo{authOK: tt.mockOK, authErr: tt.mockErr}
+			repo := &mockAuthRepo{authResult: tt.mockResult, authErr: tt.mockErr}
 			svc := NewAuthenticateService(repo, zap.NewNop())
 
-			ok, err := svc.Authenticate(context.Background(), tt.username, tt.password)
+			got, err := svc.Authenticate(context.Background(), tt.username, tt.password)
 
-			if ok != tt.wantOK {
-				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			if (got == nil) != (tt.wantResult == nil) {
+				t.Errorf("result nil-ness mismatch: got=%v, want=%v", got, tt.wantResult)
+			}
+			if got != nil && tt.wantResult != nil {
+				if got.UID != tt.wantResult.UID ||
+					got.AccountState != tt.wantResult.AccountState ||
+					got.PasswordState != tt.wantResult.PasswordState {
+					t.Errorf("result = %+v, want %+v", got, tt.wantResult)
+				}
 			}
 
 			if tt.wantErr != nil {
@@ -202,28 +253,28 @@ func TestAuthenticateService_Authenticate(t *testing.T) {
 // wrong-password from invalid-username from empty-password.
 func TestAuthenticateService_IdenticalErrorForAllFailures(t *testing.T) {
 	failureCases := []struct {
-		name     string
-		username string
-		password string
-		mockOK   bool
-		mockErr  error
+		name       string
+		username   string
+		password   string
+		mockResult *domain.AuthenticateResult
+		mockErr    error
 	}{
 		{name: "invalid username", username: "bad)(user", password: "pass"},
 		{name: "empty username", username: "", password: "pass"},
 		{name: "empty password", username: "110550001", password: ""},
-		{name: "wrong password", username: "110550001", password: "wrong", mockOK: false},
-		{name: "user not found", username: "nobody", password: "pass", mockOK: false},
+		{name: "wrong password", username: "110550001", password: "wrong"},
+		{name: "user not found", username: "nobody", password: "pass"},
 		{name: "repo error", username: "110550001", password: "pass", mockErr: errors.New("conn reset")},
 	}
 
 	var firstErr error
 	for i, tt := range failureCases {
-		repo := &mockAuthRepo{authOK: tt.mockOK, authErr: tt.mockErr}
+		repo := &mockAuthRepo{authResult: tt.mockResult, authErr: tt.mockErr}
 		svc := NewAuthenticateService(repo, zap.NewNop())
 
-		ok, err := svc.Authenticate(context.Background(), tt.username, tt.password)
-		if ok {
-			t.Fatalf("case %q returned ok=true, want false", tt.name)
+		got, err := svc.Authenticate(context.Background(), tt.username, tt.password)
+		if got != nil {
+			t.Fatalf("case %q returned result=%+v, want nil", tt.name, got)
 		}
 		if err == nil {
 			t.Fatalf("case %q returned err=nil, want ErrAuthenticationFailed", tt.name)
@@ -258,7 +309,15 @@ func TestAuthenticateService_NeverLogsPassword(t *testing.T) {
 			core, logs := observer.New(zap.DebugLevel) // capture ALL levels
 			logger := zap.New(core)
 
-			repo := &mockAuthRepo{authOK: sc.mockOK}
+			var mockResult *domain.AuthenticateResult
+			if sc.mockOK {
+				mockResult = &domain.AuthenticateResult{
+					UID:           "110550001",
+					AccountState:  domain.AccountStateActive,
+					PasswordState: domain.PasswordStateCurrent,
+				}
+			}
+			repo := &mockAuthRepo{authResult: mockResult}
 			svc := NewAuthenticateService(repo, logger)
 
 			_, _ = svc.Authenticate(context.Background(), "110550001", password)
@@ -287,7 +346,11 @@ func TestAuthenticateService_NeverLogsPassword(t *testing.T) {
 // TestAuthenticateService_PassesUsernameToRepo verifies the username reaches
 // the repository unchanged.
 func TestAuthenticateService_PassesUsernameToRepo(t *testing.T) {
-	repo := &mockAuthRepo{authOK: true}
+	repo := &mockAuthRepo{authResult: &domain.AuthenticateResult{
+		UID:           "T1234",
+		AccountState:  domain.AccountStateActive,
+		PasswordState: domain.PasswordStateCurrent,
+	}}
 	svc := NewAuthenticateService(repo, zap.NewNop())
 
 	_, _ = svc.Authenticate(context.Background(), "T1234", "pw")

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -30,6 +31,12 @@ type Config struct {
 	APIKeys            map[string]string // key → service name
 	AuthRateLimit      int
 	AuthRateCleanupMin int
+	// LDAPPasswordMaxAge controls when an LDAP entry's `pwdChangedTime` is
+	// considered expired in the authenticate response. Zero disables the
+	// time-based check (pwdReset=TRUE → must_change still applies).
+	// Loaded from env LDAP_PASSWORD_MAX_AGE as a Go duration string (e.g.
+	// "8760h", "2160h"). Default: 0.
+	LDAPPasswordMaxAge time.Duration
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +169,18 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	var passwordMaxAge time.Duration
+	if raw := strings.TrimSpace(os.Getenv("LDAP_PASSWORD_MAX_AGE")); raw != "" {
+		d, perr := time.ParseDuration(raw)
+		if perr != nil {
+			return nil, fmt.Errorf("invalid duration value for LDAP_PASSWORD_MAX_AGE")
+		}
+		if d < 0 {
+			return nil, fmt.Errorf("invalid duration value for LDAP_PASSWORD_MAX_AGE")
+		}
+		passwordMaxAge = d
+	}
+
 	apiKeys, err := parseAPIKeys(os.Getenv("API_KEYS"))
 	if err != nil {
 		return nil, err
@@ -194,6 +213,7 @@ func Load() (*Config, error) {
 		APIKeys:            apiKeys,
 		AuthRateLimit:      authRateLimit,
 		AuthRateCleanupMin: authRateCleanupMin,
+		LDAPPasswordMaxAge: passwordMaxAge,
 	}
 
 	return cfg, nil

@@ -25,7 +25,7 @@ func (m *modifyMockRepo) Lookup(context.Context, string, []string) (*domain.Acco
 func (m *modifyMockRepo) LookupBatch(context.Context, []string, []string) ([]*domain.Account, []string, error) {
 	panic("unused")
 }
-func (m *modifyMockRepo) Authenticate(context.Context, string, string) (bool, error) {
+func (m *modifyMockRepo) Authenticate(context.Context, string, string) (*domain.AuthenticateResult, error) {
 	panic("unused")
 }
 func (m *modifyMockRepo) HealthCheck(context.Context) error { panic("unused") }

@@ -23,40 +23,37 @@ func NewAuthenticateService(repo domain.LDAPRepository, logger *zap.Logger) *Aut
 	return &AuthenticateService{repo: repo, logger: logger}
 }
 
-// Authenticate verifies a user's password.
+// Authenticate verifies a user's password and returns post-bind state.
 // See domain.AuthenticateUseCase.Authenticate for acceptance criteria.
 //
 // Implementation steps:
 //  1. Validate username with domain.ValidateUsername()
-//     — on failure, return (false, domain.ErrAuthenticationFailed) — NOT ErrInvalidUsername
+//     — on failure, return (nil, domain.ErrAuthenticationFailed)
 //  2. Check password is non-empty
-//     — on failure, return (false, domain.ErrAuthenticationFailed) — NOT a descriptive error
+//     — on failure, return (nil, domain.ErrAuthenticationFailed)
 //  3. Call r.repo.Authenticate(ctx, username, password)
-//  4. If repo returns (true, nil) → return (true, nil)
-//  5. For ALL other cases → return (false, domain.ErrAuthenticationFailed)
+//  4. If repo returns (result, nil) with result != nil → return (result, nil)
+//  5. For ALL other cases → return (nil, domain.ErrAuthenticationFailed)
 //
 // Security constraints:
 //   - MUST NOT log the password at any level
 //   - MUST NOT return different errors for different failure reasons
 //   - MAY log: username, success/failure result, request ID
-func (s *AuthenticateService) Authenticate(ctx context.Context, username string, password string) (bool, error) {
+func (s *AuthenticateService) Authenticate(ctx context.Context, username string, password string) (*domain.AuthenticateResult, error) {
 	if err := domain.ValidateUsername(username); err != nil {
-		return false, domain.ErrAuthenticationFailed
+		return nil, domain.ErrAuthenticationFailed
 	}
 
 	if strings.TrimSpace(password) == "" {
-		return false, domain.ErrAuthenticationFailed
+		return nil, domain.ErrAuthenticationFailed
 	}
 
-	ok, err := s.repo.Authenticate(ctx, username, password)
-	if err != nil {
-		return false, domain.ErrAuthenticationFailed
-	}
-	if !ok {
-		return false, domain.ErrAuthenticationFailed
+	result, err := s.repo.Authenticate(ctx, username, password)
+	if err != nil || result == nil {
+		return nil, domain.ErrAuthenticationFailed
 	}
 
-	return true, nil
+	return result, nil
 }
 
 // Compile-time interface check.
