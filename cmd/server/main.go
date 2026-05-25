@@ -94,7 +94,7 @@ func main() {
 		logger.Fatal("failed to initialize external ldap pool", zap.Error(err))
 	}
 
-	repo := infraldap.NewRepository(internalPool, externalPool, logger)
+	repo := infraldap.NewRepository(internalPool, externalPool, cfg.LDAPPasswordMaxAge, logger)
 	lookupUC := usecase.NewLookupService(repo)
 	authUC := usecase.NewAuthenticateService(repo, logger)
 	modifyUC := usecase.NewModifyService(repo)

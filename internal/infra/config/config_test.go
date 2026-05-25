@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoad(t *testing.T) {
@@ -155,6 +156,53 @@ func TestLoad(t *testing.T) {
 			//   Internal.ConnPoolSize=20, External.ConnPoolSize=3,
 			//   AuthRateLimit=10, AuthRateCleanupMin=5
 		},
+		{
+			name: "valid LDAP_PASSWORD_MAX_AGE",
+			envVars: map[string]string{
+				"LDAP_BASE_DN":          "o=nycu",
+				"LDAP_INTERNAL_HOST":    "ldap1",
+				"LDAP_INTERNAL_BIND_DN": "cn=readonly",
+				"LDAP_INTERNAL_BIND_PW": "secret1",
+				"LDAP_EXTERNAL_HOST":    "ldap2",
+				"LDAP_EXTERNAL_BIND_DN": "cn=readonly",
+				"LDAP_EXTERNAL_BIND_PW": "secret2",
+				"API_KEYS":              "key1:portal",
+				"LDAP_PASSWORD_MAX_AGE": "8760h",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid LDAP_PASSWORD_MAX_AGE",
+			envVars: map[string]string{
+				"LDAP_BASE_DN":          "o=nycu",
+				"LDAP_INTERNAL_HOST":    "ldap1",
+				"LDAP_INTERNAL_BIND_DN": "cn=readonly",
+				"LDAP_INTERNAL_BIND_PW": "secret1",
+				"LDAP_EXTERNAL_HOST":    "ldap2",
+				"LDAP_EXTERNAL_BIND_DN": "cn=readonly",
+				"LDAP_EXTERNAL_BIND_PW": "secret2",
+				"API_KEYS":              "key1:portal",
+				"LDAP_PASSWORD_MAX_AGE": "not-a-duration",
+			},
+			wantErr:     true,
+			errContains: "LDAP_PASSWORD_MAX_AGE",
+		},
+		{
+			name: "negative LDAP_PASSWORD_MAX_AGE rejected",
+			envVars: map[string]string{
+				"LDAP_BASE_DN":          "o=nycu",
+				"LDAP_INTERNAL_HOST":    "ldap1",
+				"LDAP_INTERNAL_BIND_DN": "cn=readonly",
+				"LDAP_INTERNAL_BIND_PW": "secret1",
+				"LDAP_EXTERNAL_HOST":    "ldap2",
+				"LDAP_EXTERNAL_BIND_DN": "cn=readonly",
+				"LDAP_EXTERNAL_BIND_PW": "secret2",
+				"API_KEYS":              "key1:portal",
+				"LDAP_PASSWORD_MAX_AGE": "-1h",
+			},
+			wantErr:     true,
+			errContains: "LDAP_PASSWORD_MAX_AGE",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -181,6 +229,7 @@ func TestLoad(t *testing.T) {
 				"API_KEYS",
 				"AUTH_RATE_LIMIT",
 				"AUTH_RATE_CLEANUP_MIN",
+				"LDAP_PASSWORD_MAX_AGE",
 			}
 
 			for _, k := range allVars {
@@ -245,6 +294,9 @@ func TestLoad(t *testing.T) {
 				if cfg.AuthRateLimit != 5 || cfg.AuthRateCleanupMin != 10 {
 					t.Fatalf("rate defaults mismatch: got limit=%d cleanup=%d", cfg.AuthRateLimit, cfg.AuthRateCleanupMin)
 				}
+				if cfg.LDAPPasswordMaxAge != 0 {
+					t.Fatalf("LDAPPasswordMaxAge default = %v, want 0", cfg.LDAPPasswordMaxAge)
+				}
 				if len(cfg.APIKeys) != 2 || cfg.APIKeys["key1"] != "portal" || cfg.APIKeys["key2"] != "mfa" {
 					t.Fatalf("APIKeys mismatch: got %#v", cfg.APIKeys)
 				}
@@ -258,6 +310,10 @@ func TestLoad(t *testing.T) {
 				}
 				if cfg.APIKeys["key1"] != "portal" {
 					t.Fatalf("APIKeys[key1] = %q, want %q", cfg.APIKeys["key1"], "portal")
+				}
+			case "valid LDAP_PASSWORD_MAX_AGE":
+				if cfg.LDAPPasswordMaxAge != 8760*time.Hour {
+					t.Fatalf("LDAPPasswordMaxAge = %v, want 8760h", cfg.LDAPPasswordMaxAge)
 				}
 			}
 		})

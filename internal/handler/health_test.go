@@ -23,7 +23,7 @@ func (m *mockHealthRepo) LookupBatch(context.Context, []string, []string) ([]*do
 	panic("LookupBatch should not be called in health tests")
 }
 
-func (m *mockHealthRepo) Authenticate(context.Context, string, string) (bool, error) {
+func (m *mockHealthRepo) Authenticate(context.Context, string, string) (*domain.AuthenticateResult, error) {
 	panic("Authenticate should not be called in health tests")
 }
 

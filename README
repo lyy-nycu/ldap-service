@@ -223,8 +223,19 @@ Request body:
 Success response (200):
 
 ```json
-{"authenticated":true}
+{
+	"user_id": "110550001",
+	"account_state": "active",
+	"password_state": "current"
+}
 ```
+
+`account_state` is one of `active`, `disabled`, `pending_activation`, `locked`.
+`password_state` is one of `current`, `expired`, `must_change`. The mapping is
+derived from the matched LDAP entry's attributes (`disable`, `pwdReset`,
+`pwdChangedTime`) and the configured `LDAP_PASSWORD_MAX_AGE` window. Policy
+decisions based on these values (for example forcing a password reset) belong
+to the calling service.
 
 Failure response (401, always generic):
 

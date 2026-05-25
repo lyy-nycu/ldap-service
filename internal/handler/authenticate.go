@@ -16,8 +16,19 @@ type authenticateRequest struct {
 }
 
 // authenticateResponse is the JSON response body for successful authentication.
+//
+// Wire shape (per the portal-backend contract change CR 2026-05-25):
+//
+//	{ "user_id": "...", "account_state": "active|...",
+//	  "password_state": "current|..." }
+//
+// Both account_state and password_state are REQUIRED. They are populated
+// whenever the LDAP bind succeeded, regardless of the policy state of the
+// account — the policy decision (e.g. disabled → 403) is the caller's.
 type authenticateResponse struct {
-	Authenticated bool `json:"authenticated"`
+	UserID        string               `json:"user_id"`
+	AccountState  domain.AccountState  `json:"account_state"`
+	PasswordState domain.PasswordState `json:"password_state"`
 }
 
 // HandleAuthenticate returns a handler for POST /api/v1/ldap/authenticate.
@@ -29,8 +40,11 @@ type authenticateResponse struct {
 //   - If username is empty: RespondProblem with domain.NewInvalidRequest
 //   - If password is empty: RespondProblem with domain.NewInvalidRequest
 //   - MUST call uc.Authenticate(ctx, username, password)
-//   - If (true, nil): RespondJSON with 200 and {"authenticated": true}
-//   - If (false, ErrAuthenticationFailed): RespondProblem with domain.NewAuthenticationFailed
+//   - On (*AuthenticateResult, nil): RespondJSON with 200 and the result's
+//     user_id, account_state and password_state fields
+//   - On any error or nil result: RespondProblem with
+//     domain.NewAuthenticationFailed — response shape MUST be identical
+//     for every failure reason (anti-enumeration invariant)
 //   - MUST NOT log the password — not even partially
 //   - MUST get request ID from middleware.RequestIDFromContext for Problem instance field
 func HandleAuthenticate(uc domain.AuthenticateUseCase) http.HandlerFunc {
@@ -57,9 +71,13 @@ func HandleAuthenticate(uc domain.AuthenticateUseCase) http.HandlerFunc {
 			return
 		}
 
-		authenticated, err := uc.Authenticate(r.Context(), req.Username, req.Password)
-		if err == nil && authenticated {
-			RespondJSON(w, http.StatusOK, authenticateResponse{Authenticated: true})
+		result, err := uc.Authenticate(r.Context(), req.Username, req.Password)
+		if err == nil && result != nil {
+			RespondJSON(w, http.StatusOK, authenticateResponse{
+				UserID:        result.UID,
+				AccountState:  result.AccountState,
+				PasswordState: result.PasswordState,
+			})
 			return
 		}
 

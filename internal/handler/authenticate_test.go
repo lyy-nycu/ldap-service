@@ -17,18 +17,18 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockAuthUseCase struct {
-	ok       bool
+	result   *domain.AuthenticateResult
 	err      error
 	called   int
 	lastUser string
 	lastPW   string
 }
 
-func (m *mockAuthUseCase) Authenticate(_ context.Context, username, password string) (bool, error) {
+func (m *mockAuthUseCase) Authenticate(_ context.Context, username, password string) (*domain.AuthenticateResult, error) {
 	m.called++
 	m.lastUser = username
 	m.lastPW = password
-	return m.ok, m.err
+	return m.result, m.err
 }
 
 // ---------------------------------------------------------------------------
@@ -36,30 +36,90 @@ func (m *mockAuthUseCase) Authenticate(_ context.Context, username, password str
 // ---------------------------------------------------------------------------
 
 func TestHandleAuthenticate(t *testing.T) {
+	defaultOK := &domain.AuthenticateResult{
+		UID:           "110550001",
+		AccountState:  domain.AccountStateActive,
+		PasswordState: domain.PasswordStateCurrent,
+	}
+
 	tests := []struct {
-		name       string
-		method     string
-		body       string
-		mockOK     bool
-		mockErr    error
-		wantStatus int
-		wantCalled bool // should use case be invoked?
+		name              string
+		method            string
+		body              string
+		mockResult        *domain.AuthenticateResult
+		mockErr           error
+		wantStatus        int
+		wantCalled        bool // should use case be invoked?
+		wantUserID        string
+		wantAccountState  domain.AccountState
+		wantPasswordState domain.PasswordState
 	}{
-		// --- Success ---
+		// --- Success — active/current ---
 		{
-			name:       "successful auth",
-			method:     http.MethodPost,
-			body:       `{"username":"110550001","password":"correct"}`,
-			mockOK:     true,
-			wantStatus: 200,
-			wantCalled: true,
+			name:              "successful auth (active + current)",
+			method:            http.MethodPost,
+			body:              `{"username":"110550001","password":"correct"}`,
+			mockResult:        defaultOK,
+			wantStatus:        200,
+			wantCalled:        true,
+			wantUserID:        "110550001",
+			wantAccountState:  domain.AccountStateActive,
+			wantPasswordState: domain.PasswordStateCurrent,
+		},
+		// --- Success — pending_activation propagates (CR §2.1: still 200) ---
+		{
+			name:   "successful bind, account pending_activation",
+			method: http.MethodPost,
+			body:   `{"username":"110550001","password":"correct"}`,
+			mockResult: &domain.AuthenticateResult{
+				UID:           "110550001",
+				AccountState:  domain.AccountStatePendingActivation,
+				PasswordState: domain.PasswordStateCurrent,
+			},
+			wantStatus:        200,
+			wantCalled:        true,
+			wantUserID:        "110550001",
+			wantAccountState:  domain.AccountStatePendingActivation,
+			wantPasswordState: domain.PasswordStateCurrent,
+		},
+		// --- Success — password must_change propagates ---
+		{
+			name:   "successful bind, password must_change",
+			method: http.MethodPost,
+			body:   `{"username":"T1234","password":"correct"}`,
+			mockResult: &domain.AuthenticateResult{
+				UID:           "T1234",
+				AccountState:  domain.AccountStateActive,
+				PasswordState: domain.PasswordStateMustChange,
+			},
+			wantStatus:        200,
+			wantCalled:        true,
+			wantUserID:        "T1234",
+			wantAccountState:  domain.AccountStateActive,
+			wantPasswordState: domain.PasswordStateMustChange,
+		},
+		// --- Success — password expired propagates ---
+		{
+			name:   "successful bind, password expired",
+			method: http.MethodPost,
+			body:   `{"username":"T1234","password":"correct"}`,
+			mockResult: &domain.AuthenticateResult{
+				UID:           "T1234",
+				AccountState:  domain.AccountStateActive,
+				PasswordState: domain.PasswordStateExpired,
+			},
+			wantStatus:        200,
+			wantCalled:        true,
+			wantUserID:        "T1234",
+			wantAccountState:  domain.AccountStateActive,
+			wantPasswordState: domain.PasswordStateExpired,
 		},
 		// --- Auth failure ---
 		{
 			name:       "failed auth (wrong password)",
 			method:     http.MethodPost,
 			body:       `{"username":"110550001","password":"wrong"}`,
-			mockOK:     false,
+			mockResult: nil,
 			mockErr:    domain.ErrAuthenticationFailed,
 			wantStatus: 401,
 			wantCalled: true,
@@ -130,7 +190,7 @@ func TestHandleAuthenticate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			uc := &mockAuthUseCase{ok: tt.mockOK, err: tt.mockErr}
+			uc := &mockAuthUseCase{result: tt.mockResult, err: tt.mockErr}
 			handler := HandleAuthenticate(uc)
 
 			var bodyReader *strings.Reader
@@ -167,8 +227,14 @@ func TestHandleAuthenticate(t *testing.T) {
 				if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 					t.Fatalf("failed to decode response: %v", err)
 				}
-				if !resp.Authenticated {
-					t.Error("response.authenticated = false, want true")
+				if resp.UserID != tt.wantUserID {
+					t.Errorf("response.user_id = %q, want %q", resp.UserID, tt.wantUserID)
+				}
+				if resp.AccountState != tt.wantAccountState {
+					t.Errorf("response.account_state = %q, want %q", resp.AccountState, tt.wantAccountState)
+				}
+				if resp.PasswordState != tt.wantPasswordState {
+					t.Errorf("response.password_state = %q, want %q", resp.PasswordState, tt.wantPasswordState)
 				}
 
 			case 401:
@@ -216,17 +282,23 @@ func TestHandleAuthenticate(t *testing.T) {
 func TestHandleAuthenticate_ResponseNeverContainsPassword(t *testing.T) {
 	password := "SuperSecret!@#$%"
 
+	successResult := &domain.AuthenticateResult{
+		UID:           "110550001",
+		AccountState:  domain.AccountStateActive,
+		PasswordState: domain.PasswordStateCurrent,
+	}
+
 	scenarios := []struct {
-		name   string
-		mockOK bool
-		mockErr error
+		name       string
+		mockResult *domain.AuthenticateResult
+		mockErr    error
 	}{
-		{name: "successful auth", mockOK: true},
-		{name: "failed auth", mockOK: false, mockErr: domain.ErrAuthenticationFailed},
+		{name: "successful auth", mockResult: successResult},
+		{name: "failed auth", mockErr: domain.ErrAuthenticationFailed},
 	}
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
-			uc := &mockAuthUseCase{ok: sc.mockOK, err: sc.mockErr}
+			uc := &mockAuthUseCase{result: sc.mockResult, err: sc.mockErr}
 			handler := HandleAuthenticate(uc)
 
 			body := `{"username":"110550001","password":"` + password + `"}`
@@ -247,10 +319,12 @@ func TestHandleAuthenticate_ResponseNeverContainsPassword(t *testing.T) {
 // TestHandleAuthenticate_AuthFailedResponseIsGeneric verifies that the
 // 401 response for auth failure is always the same generic message,
 // regardless of whether it was wrong-password, not-found, or any other reason.
+//
+// This is the anti-enumeration invariant from the portal-backend CR:
+// 401 response shape MUST NOT differ between failure reasons.
 func TestHandleAuthenticate_AuthFailedResponseIsGeneric(t *testing.T) {
 	failureCases := []struct {
 		name    string
-		mockOK  bool
 		mockErr error
 	}{
 		{name: "wrong password", mockErr: domain.ErrAuthenticationFailed},
@@ -260,7 +334,7 @@ func TestHandleAuthenticate_AuthFailedResponseIsGeneric(t *testing.T) {
 
 	var firstBody string
 	for i, tt := range failureCases {
-		uc := &mockAuthUseCase{ok: tt.mockOK, err: tt.mockErr}
+		uc := &mockAuthUseCase{err: tt.mockErr}
 		handler := HandleAuthenticate(uc)
 
 		body := `{"username":"110550001","password":"pw"}`
@@ -284,7 +358,11 @@ func TestHandleAuthenticate_AuthFailedResponseIsGeneric(t *testing.T) {
 // TestHandleAuthenticate_PassesCredentialsToUseCase verifies the handler
 // passes both username and password to the use case unchanged.
 func TestHandleAuthenticate_PassesCredentialsToUseCase(t *testing.T) {
-	uc := &mockAuthUseCase{ok: true}
+	uc := &mockAuthUseCase{result: &domain.AuthenticateResult{
+		UID:           "T1234",
+		AccountState:  domain.AccountStateActive,
+		PasswordState: domain.PasswordStateCurrent,
+	}}
 	handler := HandleAuthenticate(uc)
 
 	body := `{"username":"T1234","password":"P@ssw0rd!"}`
@@ -305,7 +383,11 @@ func TestHandleAuthenticate_PassesCredentialsToUseCase(t *testing.T) {
 // TestHandleAuthenticate_ExternalUserEmail verifies email-style usernames
 // from external LDAP are handled correctly.
 func TestHandleAuthenticate_ExternalUserEmail(t *testing.T) {
-	uc := &mockAuthUseCase{ok: true}
+	uc := &mockAuthUseCase{result: &domain.AuthenticateResult{
+		UID:           "alumni@example.com",
+		AccountState:  domain.AccountStateActive,
+		PasswordState: domain.PasswordStateCurrent,
+	}}
 	handler := HandleAuthenticate(uc)
 
 	body := `{"username":"alumni@example.com","password":"pw"}`

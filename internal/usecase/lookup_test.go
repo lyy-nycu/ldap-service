@@ -20,7 +20,7 @@ type mockRepo struct {
 	batchErr      error
 	lookupCalled  int
 	batchCalled   int
-	authResult    bool
+	authResult    *domain.AuthenticateResult
 	authErr       error
 	authCalled    int
 	healthErr     error
@@ -37,7 +37,7 @@ func (m *mockRepo) LookupBatch(ctx context.Context, usernames []string, attribut
 	return m.batchAccounts, m.batchNotFound, m.batchErr
 }
 
-func (m *mockRepo) Authenticate(ctx context.Context, username string, password string) (bool, error) {
+func (m *mockRepo) Authenticate(ctx context.Context, username string, password string) (*domain.AuthenticateResult, error) {
 	m.authCalled++
 	return m.authResult, m.authErr
 }
