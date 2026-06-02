@@ -253,6 +253,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsS "http://${ACME_DOMAIN}/.well-known/acme-challenge/test-token" >/dev/null || true
-          # LE staging certs are intentionally untrusted by public clients; use -k for reachability check.
-          curl -kfsS "https://${ACME_DOMAIN}/healthz" >/dev/null
+          curl -fsS --connect-timeout 5 --max-time 10 \
+            "http://${ACME_DOMAIN}/.well-known/acme-challenge/test-token" >/dev/null || true
+          # AGW may take a few minutes to propagate a newly-bound certificate.
+          # Retry with exponential back-off (10s → 20s → 40s …) until the
+          # endpoint returns 200 or the 5-minute deadline is exceeded.
+          # LE staging certs are intentionally untrusted by public clients; use -k.
+          deadline=$((SECONDS + 300))
+          delay=10
+          while (( SECONDS < deadline )); do
+            if curl -kfsS --connect-timeout 5 --max-time 10 \
+                "https://${ACME_DOMAIN}/healthz" >/dev/null 2>&1; then
+              echo "healthz OK"
+              exit 0
+            fi
+            echo "healthz not ready, retrying in ${delay}s (${SECONDS}/${deadline}s elapsed)"
+            sleep "${delay}"
+            (( delay = delay < 40 ? delay * 2 : 40 ))
+          done
+          echo "healthz did not become healthy within 5 minutes" >&2
+          exit 1
