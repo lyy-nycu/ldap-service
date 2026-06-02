@@ -38,6 +38,8 @@ jobs:
       AGW_NAME: ${{ vars.AGW_NAME_STAGING }}
       AGW_LISTENER_NAME: ${{ vars.AGW_LISTENER_NAME_STAGING }}
       AGW_SSL_CERT_NAME: ${{ vars.AGW_SSL_CERT_NAME_STAGING }}
+      NSG_RESOURCE_GROUP: ${{ vars.NSG_RESOURCE_GROUP_STAGING }}
+      NSG_NAME: ${{ vars.NSG_NAME_STAGING }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,6 +59,8 @@ jobs:
             AGW_NAME
             AGW_LISTENER_NAME
             AGW_SSL_CERT_NAME
+            NSG_RESOURCE_GROUP
+            NSG_NAME
           )
           for k in "${required[@]}"; do
             if [[ -z "${!k:-}" ]]; then
@@ -131,6 +135,22 @@ jobs:
 
           chmod +x .github/scripts/acme-http01-auth.sh .github/scripts/acme-http01-cleanup.sh
 
+      - name: Open AGW NSG port 80 for ACME challenge
+        shell: bash
+        run: |
+          set -euo pipefail
+          az network nsg rule create \
+            --resource-group "${NSG_RESOURCE_GROUP}" \
+            --nsg-name "${NSG_NAME}" \
+            --name acme-http01-temp \
+            --priority 190 \
+            --direction Inbound \
+            --access Allow \
+            --protocol Tcp \
+            --source-address-prefixes Internet \
+            --destination-port-ranges 80 \
+            --only-show-errors -o none
+
       - name: Issue or renew certificate
         shell: bash
         run: |
@@ -151,6 +171,17 @@ jobs:
             --agree-tos \
             --email "${ACME_CONTACT_EMAIL}" \
             -d "${ACME_DOMAIN}"
+
+      - name: Close AGW NSG port 80
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          az network nsg rule delete \
+            --resource-group "${NSG_RESOURCE_GROUP}" \
+            --nsg-name "${NSG_NAME}" \
+            --name acme-http01-temp \
+            --only-show-errors -o none || true
 
       - name: Package cert as PFX
         id: pfx
