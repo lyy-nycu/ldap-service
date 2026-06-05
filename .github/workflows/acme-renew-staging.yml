@@ -249,27 +249,37 @@ jobs:
             --only-show-errors \
             -o none
 
-      - name: Verify challenge path and healthz
+      - name: Verify cert deployment
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 5 --max-time 10 \
-            "http://${ACME_DOMAIN}/.well-known/acme-challenge/test-token" >/dev/null || true
-          # AGW may take a few minutes to propagate a newly-bound certificate.
-          # Retry with exponential back-off (10s → 20s → 40s …) until the
-          # endpoint returns 200 or the 5-minute deadline is exceeded.
-          # LE staging certs are intentionally untrusted by public clients; use -k.
-          deadline=$((SECONDS + 300))
-          delay=10
-          while (( SECONDS < deadline )); do
-            if curl -kfsS --connect-timeout 5 --max-time 10 \
-                "https://${ACME_DOMAIN}/healthz" >/dev/null 2>&1; then
-              echo "healthz OK"
-              exit 0
-            fi
-            echo "healthz not ready, retrying in ${delay}s (${SECONDS}/${deadline}s elapsed)"
-            sleep "${delay}"
-            (( delay = delay < 40 ? delay * 2 : 40 ))
-          done
-          echo "healthz did not become healthy within 5 minutes" >&2
-          exit 1
+
+          # 1. Confirm the AGW listener is bound to the expected SSL cert.
+          bound_cert="$(az network application-gateway http-listener show \
+            --resource-group "${AGW_RESOURCE_GROUP}" \
+            --gateway-name "${AGW_NAME}" \
+            --name "${AGW_LISTENER_NAME}" \
+            --query "sslCertificate.id" \
+            --output tsv)"
+          expected_suffix="/sslCertificates/${AGW_SSL_CERT_NAME}"
+          if [[ "${bound_cert}" != *"${expected_suffix}" ]]; then
+            echo "AGW listener is not bound to expected cert '${AGW_SSL_CERT_NAME}'" >&2
+            echo "  bound: ${bound_cert}" >&2
+            exit 1
+          fi
+          echo "AGW listener cert binding OK: ${bound_cert}"
+
+          # 2. Confirm the Key Vault cert is not expired.
+          expires="$(az keyvault certificate show \
+            --vault-name "${KEY_VAULT_NAME}" \
+            --name "${KEY_VAULT_CERT_NAME}" \
+            --query "attributes.expires" \
+            --output tsv)"
+          now_epoch="$(date -u +%s)"
+          expires_epoch="$(date -u -d "${expires}" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%S+00:00" "${expires}" +%s)"
+          if (( expires_epoch <= now_epoch )); then
+            echo "cert in Key Vault is expired (expires: ${expires})" >&2
+            exit 1
+          fi
+          days_left=$(( (expires_epoch - now_epoch) / 86400 ))
+          echo "Key Vault cert valid, expires ${expires} (${days_left} days remaining)"
